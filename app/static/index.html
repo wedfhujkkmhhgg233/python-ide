@@ -31,6 +31,15 @@
 
             height: 100%;
 
+            /*
+             * 100dvh accounts for mobile browser chrome
+             * (address bar, nav bar) showing/hiding, so the
+             * layout doesn't get cut off or leave a gap on
+             * phones. Falls back to 100% on browsers that
+             * don't support dvh.
+             */
+            height: 100dvh;
+
             overflow: hidden;
 
         }
@@ -167,6 +176,102 @@
         .run-button:hover {
 
             background: #2ea043;
+
+        }
+
+
+        /* =========================
+           MOBILE HAMBURGER + DRAWER
+           (hidden on desktop; enabled
+           in the mobile media query
+           below)
+        ========================= */
+
+        #hamburger {
+
+            display: none;
+
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+
+        }
+
+
+        #backdrop {
+
+            display: none;
+
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 90;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+
+        }
+
+
+        #backdrop.show {
+
+            opacity: 1;
+            pointer-events: auto;
+
+        }
+
+
+        /* =========================
+           MOBILE BOTTOM TAB BAR
+           (Editor / Output switch;
+           hidden on desktop)
+        ========================= */
+
+        #mobileTabs {
+
+            display: none;
+
+            height: 52px;
+            min-height: 52px;
+            background: #161b22;
+            border-top: 1px solid #30363d;
+
+        }
+
+
+        #mobileTabs button {
+
+            flex: 1;
+            border: none;
+            border-radius: 0;
+            border-right: 1px solid #30363d;
+            background: transparent;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            font-size: 11px;
+            color: #8b949e;
+
+        }
+
+
+        #mobileTabs button:last-child {
+
+            border-right: none;
+
+        }
+
+
+        #mobileTabs button.active {
+
+            background: #21262d;
+            color: #58a6ff;
 
         }
 
@@ -590,33 +695,118 @@
 
             button {
 
-                padding:
-                    7px 8px;
+                /* larger tap targets on touch screens */
+                min-height: 40px;
 
-                font-size: 11px;
+                padding:
+                    8px 10px;
+
+                font-size: 12px;
 
             }
 
 
+            #hamburger {
+
+                display: flex;
+
+            }
+
+
+            /*
+             * Sidebar becomes a slide-in drawer that overlays
+             * the workspace instead of squeezing the editor
+             * into a sliver of the screen.
+             */
             #sidebar {
 
-                width: 155px;
+                position: fixed;
+                top: 56px;
+                left: 0;
+                bottom: 0;
 
-                min-width: 155px;
+                width: 82vw;
+                max-width: 300px;
+                min-width: 0;
+
+                z-index: 100;
+
+                transform: translateX(-100%);
+                transition: transform 0.22s ease;
+
+                box-shadow: 2px 0 16px rgba(0, 0, 0, 0.55);
+
+            }
+
+
+            #sidebar.open {
+
+                transform: translateX(0);
+
+            }
+
+
+            #backdrop {
+
+                display: block;
+                top: 56px;
+
+            }
+
+
+            #mobileTabs {
+
+                display: flex;
+
+            }
+
+
+            /*
+             * Only one of Editor / Output is shown at a time
+             * on mobile, controlled by data-mobile-view on
+             * <body>, and switched via #mobileTabs.
+             */
+            body[data-mobile-view="editor"] #terminal {
+
+                display: none;
+
+            }
+
+
+            body[data-mobile-view="output"] #editor,
+            body[data-mobile-view="output"] #filebar {
+
+                display: none;
+
+            }
+
+
+            body[data-mobile-view="output"] #terminal {
+
+                flex: 1;
+                height: auto;
 
             }
 
 
             #terminal {
 
-                height: 165px;
+                height: 100%;
 
             }
 
 
             #editor {
 
-                font-size: 14px;
+                /* keep >=16px so iOS/Android don't zoom in on focus */
+                font-size: 16px;
+
+            }
+
+
+            #projectSelect {
+
+                font-size: 16px;
 
             }
 
@@ -634,19 +824,17 @@
 
             #sidebar {
 
-                width: 140px;
-
-                min-width: 140px;
+                width: 86vw;
 
             }
 
 
             button {
 
-                font-size: 10px;
+                font-size: 11px;
 
                 padding:
-                    7px 6px;
+                    8px 8px;
 
             }
 
@@ -657,7 +845,7 @@
 </head>
 
 
-<body>
+<body data-mobile-view="editor">
 
 
 <!-- =========================
@@ -665,6 +853,16 @@
 ========================= -->
 
 <header>
+
+
+    <button
+        id="hamburger"
+        onclick="toggleSidebar()"
+        title="Projects & files"
+        aria-label="Open projects and files"
+    >
+        ☰
+    </button>
 
 
     <div class="logo">
@@ -721,6 +919,13 @@
 <!-- =========================
      WORKSPACE
 ========================= -->
+
+<!-- Tapping the backdrop closes the mobile drawer -->
+<div
+    id="backdrop"
+    onclick="closeSidebar()"
+></div>
+
 
 <div id="workspace">
 
@@ -837,6 +1042,36 @@
 </div>
 
 
+<!-- =========================
+     MOBILE TAB BAR
+     (switches between the
+     code editor and the
+     terminal/output on small
+     screens; hidden on desktop)
+========================= -->
+
+<nav id="mobileTabs">
+
+    <button
+        id="tabEditorBtn"
+        class="active"
+        onclick="setMobileView('editor')"
+    >
+        <span>📝</span>
+        <span>Editor</span>
+    </button>
+
+    <button
+        id="tabOutputBtn"
+        onclick="setMobileView('output')"
+    >
+        <span>💻</span>
+        <span>Output</span>
+    </button>
+
+</nav>
+
+
 
 <script>
 
@@ -886,6 +1121,117 @@ const runButton =
     document.getElementById(
         "runButton"
     );
+
+
+const sidebarEl =
+    document.getElementById(
+        "sidebar"
+    );
+
+
+const backdropEl =
+    document.getElementById(
+        "backdrop"
+    );
+
+
+const tabEditorBtn =
+    document.getElementById(
+        "tabEditorBtn"
+    );
+
+
+const tabOutputBtn =
+    document.getElementById(
+        "tabOutputBtn"
+    );
+
+
+const isMobile = () =>
+    window.matchMedia(
+        "(max-width: 700px)"
+    ).matches;
+
+
+
+/* =====================================================
+   MOBILE: SIDEBAR DRAWER
+===================================================== */
+
+
+function openSidebar() {
+
+    sidebarEl.classList.add(
+        "open"
+    );
+
+    backdropEl.classList.add(
+        "show"
+    );
+
+}
+
+
+function closeSidebar() {
+
+    sidebarEl.classList.remove(
+        "open"
+    );
+
+    backdropEl.classList.remove(
+        "show"
+    );
+
+}
+
+
+function toggleSidebar() {
+
+    if (
+        sidebarEl.classList.contains(
+            "open"
+        )
+    ) {
+
+        closeSidebar();
+
+    }
+
+    else {
+
+        openSidebar();
+
+    }
+
+}
+
+
+
+/* =====================================================
+   MOBILE: EDITOR / OUTPUT TABS
+===================================================== */
+
+
+function setMobileView(
+    view
+) {
+
+    document.body.setAttribute(
+        "data-mobile-view",
+        view
+    );
+
+    tabEditorBtn.classList.toggle(
+        "active",
+        view === "editor"
+    );
+
+    tabOutputBtn.classList.toggle(
+        "active",
+        view === "output"
+    );
+
+}
 
 
 
@@ -1554,6 +1900,24 @@ async function openFile(
             "none";
 
 
+        /*
+         * On mobile, opening a file should close the
+         * drawer and bring the editor into view.
+         */
+
+        if (
+            isMobile()
+        ) {
+
+            closeSidebar();
+
+            setMobileView(
+                "editor"
+            );
+
+        }
+
+
         await loadFiles();
 
 
@@ -1860,6 +2224,22 @@ async function runCurrent() {
         "Running project...\n\n" +
         "Entry file: " +
         currentFile;
+
+
+    /*
+     * On mobile, jump to the Output tab so the user
+     * doesn't have to switch manually to see the result.
+     */
+
+    if (
+        isMobile()
+    ) {
+
+        setMobileView(
+            "output"
+        );
+
+    }
 
 
 
