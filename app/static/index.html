@@ -13,6 +13,39 @@
     <title>Python IDE</title>
 
 
+    <!-- =========================
+         CODE EDITOR (CodeMirror)
+         Provides syntax highlighting,
+         auto-indent, bracket matching,
+         and auto-closing brackets.
+    ========================= -->
+
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
+    >
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"
+    ></script>
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"
+    ></script>
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"
+    ></script>
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"
+    ></script>
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"
+    ></script>
+
+
     <style>
 
         * {
@@ -587,6 +620,243 @@
 
 
         /* =========================
+           CODEMIRROR (CODE EDITOR)
+        ========================= */
+
+        #main .CodeMirror {
+
+            flex: 1;
+
+            min-height: 0;
+
+            height: 100%;
+
+            width: 100%;
+
+            font-family:
+                "Courier New",
+                monospace;
+
+            font-size: 15px;
+
+            line-height: 1.55;
+
+        }
+
+
+        .cm-s-ideDark.CodeMirror {
+
+            background: #0d1117;
+
+            color: #e6edf3;
+
+        }
+
+
+        .cm-s-ideDark .CodeMirror-gutters {
+
+            background: #0d1117;
+
+            border-right:
+                1px solid #21262d;
+
+        }
+
+
+        .cm-s-ideDark .CodeMirror-linenumber {
+
+            color: #484f58;
+
+        }
+
+
+        .cm-s-ideDark .CodeMirror-cursor {
+
+            border-left:
+                1px solid #e6edf3;
+
+        }
+
+
+        .cm-s-ideDark .CodeMirror-selected {
+
+            background: #264f78;
+
+        }
+
+
+        .cm-s-ideDark .CodeMirror-activeline-background {
+
+            background: rgba(255, 255, 255, 0.05);
+
+        }
+
+
+        .cm-s-ideDark .CodeMirror-matchingbracket {
+
+            color: #58a6ff !important;
+
+            background: rgba(88, 166, 255, 0.15);
+
+        }
+
+
+        .cm-s-ideDark .cm-keyword {
+
+            color: #ff7b72;
+
+        }
+
+
+        .cm-s-ideDark .cm-def {
+
+            color: #d2a8ff;
+
+        }
+
+
+        .cm-s-ideDark .cm-variable,
+        .cm-s-ideDark .cm-variable-2,
+        .cm-s-ideDark .cm-variable-3,
+        .cm-s-ideDark .cm-property {
+
+            color: #79c0ff;
+
+        }
+
+
+        .cm-s-ideDark .cm-operator {
+
+            color: #ff7b72;
+
+        }
+
+
+        .cm-s-ideDark .cm-comment {
+
+            color: #8b949e;
+
+            font-style: italic;
+
+        }
+
+
+        .cm-s-ideDark .cm-string,
+        .cm-s-ideDark .cm-string-2 {
+
+            color: #a5d6ff;
+
+        }
+
+
+        .cm-s-ideDark .cm-number,
+        .cm-s-ideDark .cm-atom {
+
+            color: #79c0ff;
+
+        }
+
+
+        .cm-s-ideDark .cm-meta {
+
+            color: #d2a8ff;
+
+        }
+
+
+        .cm-s-ideDark .cm-builtin {
+
+            color: #ffa657;
+
+        }
+
+
+        .cm-s-ideDark .cm-error {
+
+            color: #f85149;
+
+        }
+
+
+        /* =========================
+           FILE CONTEXT MENU
+           (right-click / long-press
+           on a file to rename or
+           delete it)
+        ========================= */
+
+        #fileContextMenu {
+
+            display: none;
+
+            position: fixed;
+
+            z-index: 200;
+
+            min-width: 150px;
+
+            background: #21262d;
+
+            border: 1px solid #30363d;
+
+            border-radius: 7px;
+
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+            padding: 4px;
+
+            overflow: hidden;
+
+        }
+
+
+        #fileContextMenu.show {
+
+            display: block;
+
+        }
+
+
+        #fileContextMenu button {
+
+            display: flex;
+
+            align-items: center;
+
+            gap: 8px;
+
+            width: 100%;
+
+            border: none;
+
+            border-radius: 5px;
+
+            background: transparent;
+
+            padding: 9px 10px;
+
+            font-size: 13px;
+
+            text-align: left;
+
+        }
+
+
+        #fileContextMenu button:hover {
+
+            background: #30363d;
+
+        }
+
+
+        #fileContextMenu button.danger {
+
+            color: #f85149;
+
+        }
+
+
+        /* =========================
            TERMINAL
         ========================= */
 
@@ -774,6 +1044,7 @@
 
 
             body[data-mobile-view="output"] #editor,
+            body[data-mobile-view="output"] .CodeMirror,
             body[data-mobile-view="output"] #filebar {
 
                 display: none;
@@ -796,7 +1067,7 @@
             }
 
 
-            #editor {
+            #main .CodeMirror {
 
                 /* keep >=16px so iOS/Android don't zoom in on focus */
                 font-size: 16px;
@@ -1072,6 +1343,32 @@
 </nav>
 
 
+<!-- =========================
+     FILE CONTEXT MENU
+     (right-click or long-press
+     a file in the sidebar)
+========================= -->
+
+<div id="fileContextMenu">
+
+    <button
+        id="renameFileBtn"
+        onclick="renameSelectedFile()"
+    >
+        ✏️ Rename
+    </button>
+
+    <button
+        id="deleteFileBtn"
+        class="danger"
+        onclick="deleteSelectedFile()"
+    >
+        🗑️ Delete
+    </button>
+
+</div>
+
+
 
 <script>
 
@@ -1091,6 +1388,80 @@ const editor =
     document.getElementById(
         "editor"
     );
+
+
+/*
+ * CodeMirror gives us syntax highlighting, auto-indent,
+ * bracket matching, and auto-closing brackets on top of
+ * the plain textarea. `cm` is what the rest of the app
+ * reads/writes instead of editor.value directly.
+ */
+
+const cm =
+    CodeMirror.fromTextArea(
+        editor,
+        {
+            mode: "python",
+            theme: "ideDark",
+            lineNumbers: true,
+            indentUnit: 4,
+            tabSize: 4,
+            indentWithTabs: false,
+            matchBrackets: true,
+            autoCloseBrackets: true,
+            styleActiveLine: true,
+            lineWrapping: false,
+            extraKeys: {
+                "Tab": function(instance) {
+
+                    if (
+                        instance.somethingSelected()
+                    ) {
+
+                        instance.indentSelection(
+                            "add"
+                        );
+
+                    }
+
+                    else {
+
+                        instance.replaceSelection(
+                            "    ",
+                            "end"
+                        );
+
+                    }
+
+                }
+            }
+        }
+    );
+
+
+cm.on(
+    "change",
+    function() {
+
+        if (
+            cm.getValue() !==
+            editor.dataset.saved
+        ) {
+
+            dirtyIndicator.style.display =
+                "inline";
+
+        }
+
+        else {
+
+            dirtyIndicator.style.display =
+                "none";
+
+        }
+
+    }
+);
 
 
 const output =
@@ -1230,6 +1601,343 @@ function setMobileView(
         "active",
         view === "output"
     );
+
+
+    if (
+        view === "editor"
+    ) {
+
+        /*
+         * CodeMirror can render blank/misaligned after being
+         * toggled with display:none, so nudge it to
+         * re-measure itself once it's visible again.
+         */
+
+        setTimeout(
+            () => cm.refresh(),
+            0
+        );
+
+    }
+
+}
+
+
+
+/* =====================================================
+   FILE CONTEXT MENU (rename / delete)
+===================================================== */
+
+
+const fileContextMenuEl =
+    document.getElementById(
+        "fileContextMenu"
+    );
+
+
+let contextMenuPath =
+    null;
+
+
+function showFileContextMenu(
+    path,
+    x,
+    y
+) {
+
+    contextMenuPath =
+        path;
+
+
+    fileContextMenuEl.classList.add(
+        "show"
+    );
+
+
+    /*
+     * Position first, then clamp so the menu never renders
+     * off the right/bottom edge of the screen.
+     */
+
+    fileContextMenuEl.style.left =
+        x + "px";
+
+    fileContextMenuEl.style.top =
+        y + "px";
+
+
+    const rect =
+        fileContextMenuEl.getBoundingClientRect();
+
+
+    const maxLeft =
+        window.innerWidth -
+        rect.width -
+        8;
+
+    const maxTop =
+        window.innerHeight -
+        rect.height -
+        8;
+
+
+    fileContextMenuEl.style.left =
+        Math.min(x, Math.max(8, maxLeft)) +
+        "px";
+
+    fileContextMenuEl.style.top =
+        Math.min(y, Math.max(8, maxTop)) +
+        "px";
+
+}
+
+
+function hideFileContextMenu() {
+
+    fileContextMenuEl.classList.remove(
+        "show"
+    );
+
+    contextMenuPath =
+        null;
+
+}
+
+
+/*
+ * Close the menu on any click/tap outside it, and on
+ * scroll (so it doesn't float over the wrong file).
+ */
+
+document.addEventListener(
+    "pointerdown",
+    (event) => {
+
+        if (
+            fileContextMenuEl.classList.contains("show") &&
+            !fileContextMenuEl.contains(event.target)
+        ) {
+
+            hideFileContextMenu();
+
+        }
+
+    }
+);
+
+
+document.addEventListener(
+    "scroll",
+    hideFileContextMenu,
+    true
+);
+
+
+async function renameSelectedFile() {
+
+    const oldPath =
+        contextMenuPath;
+
+
+    hideFileContextMenu();
+
+
+    if (
+        !oldPath ||
+        !currentProject
+    ) {
+
+        return;
+
+    }
+
+
+    const input =
+        prompt(
+            "Rename file:",
+            oldPath
+        );
+
+
+    if (
+        input === null
+    ) {
+
+        return;
+
+    }
+
+
+    const newPath =
+        input.trim();
+
+
+    if (
+        !newPath ||
+        newPath === oldPath
+    ) {
+
+        return;
+
+    }
+
+
+    try {
+
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/file/rename`,
+            {
+
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+
+                        old_path:
+                            oldPath,
+
+                        new_path:
+                            newPath
+
+                    })
+
+            }
+        );
+
+
+        /*
+         * If the renamed file is the one currently open,
+         * keep the editor pointed at its new name/path.
+         */
+
+        if (
+            currentFile === oldPath
+        ) {
+
+            currentFile =
+                newPath;
+
+            filename.textContent =
+                newPath;
+
+        }
+
+
+        await loadFiles();
+
+
+    }
+
+    catch (error) {
+
+        output.textContent =
+            "Rename failed:\n" +
+            error.message;
+
+    }
+
+}
+
+
+async function deleteSelectedFile() {
+
+    const path =
+        contextMenuPath;
+
+
+    hideFileContextMenu();
+
+
+    if (
+        !path ||
+        !currentProject
+    ) {
+
+        return;
+
+    }
+
+
+    const confirmed =
+        confirm(
+            `Delete "${path}"?\n\n` +
+            "This cannot be undone."
+        );
+
+
+    if (
+        !confirmed
+    ) {
+
+        return;
+
+    }
+
+
+    try {
+
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/file?path=${encodeURIComponent(
+                path
+            )}`,
+            {
+
+                method: "DELETE"
+
+            }
+        );
+
+
+        /*
+         * If the deleted file was open in the editor,
+         * clear it out so we don't keep editing a file
+         * that no longer exists.
+         */
+
+        if (
+            currentFile === path
+        ) {
+
+            currentFile =
+                null;
+
+            cm.setValue(
+                ""
+            );
+
+            editor.dataset.saved =
+                "";
+
+            filename.textContent =
+                "No file selected";
+
+            dirtyIndicator.style.display =
+                "none";
+
+        }
+
+
+        await loadFiles();
+
+
+    }
+
+    catch (error) {
+
+        output.textContent =
+            "Delete failed:\n" +
+            error.message;
+
+    }
 
 }
 
@@ -1588,7 +2296,7 @@ async function switchProject() {
 
     if (
         currentFile &&
-        editor.value !==
+        cm.getValue() !==
         editor.dataset.saved
     ) {
 
@@ -1627,8 +2335,9 @@ async function switchProject() {
         null;
 
 
-    editor.value =
-        "";
+    cm.setValue(
+        ""
+    );
 
 
     editor.dataset.saved =
@@ -1775,8 +2484,133 @@ async function loadFiles() {
                 path;
 
 
+            /*
+             * Left click / tap: open the file. Right click
+             * (desktop) or a long press (touch) instead opens
+             * the rename/delete menu for that file.
+             */
+
+            let longPressTimer =
+                null;
+
+            let longPressFired =
+                false;
+
+
+            item.oncontextmenu =
+                (event) => {
+
+                    event.preventDefault();
+
+                    showFileContextMenu(
+                        path,
+                        event.clientX,
+                        event.clientY
+                    );
+
+                };
+
+
+            item.addEventListener(
+                "pointerdown",
+                (event) => {
+
+                    if (
+                        event.pointerType !== "touch"
+                    ) {
+
+                        return;
+
+                    }
+
+                    longPressFired =
+                        false;
+
+                    longPressTimer =
+                        setTimeout(
+                            () => {
+
+                                longPressFired =
+                                    true;
+
+                                if (
+                                    navigator.vibrate
+                                ) {
+
+                                    navigator.vibrate(
+                                        15
+                                    );
+
+                                }
+
+                                showFileContextMenu(
+                                    path,
+                                    event.clientX,
+                                    event.clientY
+                                );
+
+                            },
+                            550
+                        );
+
+                }
+            );
+
+
+            const cancelLongPress =
+                () => {
+
+                    if (
+                        longPressTimer
+                    ) {
+
+                        clearTimeout(
+                            longPressTimer
+                        );
+
+                        longPressTimer =
+                            null;
+
+                    }
+
+                };
+
+
+            item.addEventListener(
+                "pointerup",
+                cancelLongPress
+            );
+
+            item.addEventListener(
+                "pointermove",
+                cancelLongPress
+            );
+
+            item.addEventListener(
+                "pointercancel",
+                cancelLongPress
+            );
+
+
             item.onclick =
-                () => openFile(path);
+                () => {
+
+                    if (
+                        longPressFired
+                    ) {
+
+                        longPressFired =
+                            false;
+
+                        return;
+
+                    }
+
+                    openFile(
+                        path
+                    );
+
+                };
 
 
             container.appendChild(
@@ -1836,7 +2670,7 @@ async function openFile(
 
     if (
         currentFile &&
-        editor.value !==
+        cm.getValue() !==
         editor.dataset.saved
     ) {
 
@@ -1884,8 +2718,9 @@ async function openFile(
             path;
 
 
-        editor.value =
-            data.content;
+        cm.setValue(
+            data.content
+        );
 
 
         editor.dataset.saved =
@@ -1985,7 +2820,7 @@ async function saveFile() {
                             currentFile,
 
                         content:
-                            editor.value
+                            cm.getValue()
 
                     })
 
@@ -1994,7 +2829,7 @@ async function saveFile() {
 
 
         editor.dataset.saved =
-            editor.value;
+            cm.getValue();
 
 
         dirtyIndicator.style.display =
@@ -2191,7 +3026,7 @@ async function runCurrent() {
      */
 
     if (
-        editor.value !==
+        cm.getValue() !==
         editor.dataset.saved
     ) {
 
@@ -2385,90 +3220,10 @@ async function runCurrent() {
 
 /* =====================================================
    EDITOR
+   (dirty-state tracking and Tab handling now live on the
+   CodeMirror instance itself - see cm.on("change", ...)
+   and extraKeys.Tab set up where `cm` is created above.)
 ===================================================== */
-
-
-editor.addEventListener(
-    "input",
-    function() {
-
-
-        if (
-            editor.value !==
-            editor.dataset.saved
-        ) {
-
-            dirtyIndicator.style.display =
-                "inline";
-
-        }
-
-        else {
-
-            dirtyIndicator.style.display =
-                "none";
-
-        }
-
-    }
-);
-
-
-
-/*
- * TAB support.
- */
-
-editor.addEventListener(
-    "keydown",
-    function(event) {
-
-
-        if (
-            event.key === "Tab"
-        ) {
-
-
-            event.preventDefault();
-
-
-            const start =
-                editor.selectionStart;
-
-
-            const end =
-                editor.selectionEnd;
-
-
-            editor.value =
-                editor.value.substring(
-                    0,
-                    start
-                )
-                +
-                "    "
-                +
-                editor.value.substring(
-                    end
-                );
-
-
-            editor.selectionStart =
-                start + 4;
-
-
-            editor.selectionEnd =
-                start + 4;
-
-
-            editor.dispatchEvent(
-                new Event("input")
-            );
-
-        }
-
-    }
-);
 
 
 
