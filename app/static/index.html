@@ -1,142 +1,1115 @@
 <!DOCTYPE html>
+
 <html>
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <title>Python IDE</title>
+<meta charset="UTF-8">
 
-    <style>
-        * {
-            box-sizing: border-box;
-        }
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+>
 
-        body {
-            margin: 0;
-            background: #111;
-            color: #eee;
-            font-family: Arial, sans-serif;
-        }
+<title>Python IDE</title>
 
-        header {
-            height: 55px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 15px;
-            background: #181818;
-            border-bottom: 1px solid #333;
-        }
+<style>
 
-        button {
-            border: none;
-            border-radius: 6px;
-            padding: 9px 18px;
-            background: #2ea043;
-            color: white;
-            font-weight: bold;
-            cursor: pointer;
-        }
+* {
+    box-sizing: border-box;
+}
 
-        button:disabled {
-            opacity: 0.5;
-        }
+body {
 
-        #editor {
-            width: 100%;
-            height: 55vh;
-            resize: none;
-            border: none;
-            outline: none;
-            padding: 15px;
-            background: #0d1117;
-            color: #eee;
-            font-family: monospace;
-            font-size: 15px;
-            line-height: 1.5;
-        }
+    margin: 0;
 
-        #output {
-            padding: 15px;
-            min-height: 35vh;
-            background: #080808;
-            white-space: pre-wrap;
-            font-family: monospace;
-            overflow-x: auto;
-        }
+    height: 100vh;
 
-        .title {
-            font-weight: bold;
-        }
-    </style>
+    display: flex;
+
+    flex-direction: column;
+
+    background: #0d1117;
+
+    color: #e6edf3;
+
+    font-family: Arial, sans-serif;
+
+}
+
+
+/* HEADER */
+
+header {
+
+    height: 55px;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 8px;
+
+    padding: 0 12px;
+
+    background: #161b22;
+
+    border-bottom:
+        1px solid #30363d;
+
+    flex-shrink: 0;
+
+}
+
+
+.title {
+
+    font-weight: bold;
+
+    margin-right: auto;
+
+}
+
+
+button {
+
+    border:
+        1px solid #30363d;
+
+    border-radius: 6px;
+
+    padding:
+        8px 12px;
+
+    background: #21262d;
+
+    color: #e6edf3;
+
+    cursor: pointer;
+
+}
+
+
+button:hover {
+
+    background: #30363d;
+
+}
+
+
+.run {
+
+    background: #238636;
+
+    border-color: #2ea043;
+
+}
+
+
+.run:hover {
+
+    background: #2ea043;
+
+}
+
+
+button:disabled {
+
+    opacity: .5;
+
+    cursor: not-allowed;
+
+}
+
+
+/* WORKSPACE */
+
+#workspace {
+
+    display: flex;
+
+    flex: 1;
+
+    min-height: 0;
+
+}
+
+
+/* SIDEBAR */
+
+#sidebar {
+
+    width: 230px;
+
+    background: #161b22;
+
+    border-right:
+        1px solid #30363d;
+
+    display: flex;
+
+    flex-direction: column;
+
+}
+
+
+.sidebar-head {
+
+    padding: 9px;
+
+    display: flex;
+
+    gap: 6px;
+
+    border-bottom:
+        1px solid #30363d;
+
+}
+
+
+#projectSelect {
+
+    flex: 1;
+
+    min-width: 0;
+
+    background: #0d1117;
+
+    color: #e6edf3;
+
+    border:
+        1px solid #30363d;
+
+    border-radius: 5px;
+
+    padding: 7px;
+
+}
+
+
+#files {
+
+    padding: 8px;
+
+    overflow-y: auto;
+
+}
+
+
+.file {
+
+    padding: 8px;
+
+    border-radius: 5px;
+
+    cursor: pointer;
+
+    white-space: nowrap;
+
+    overflow: hidden;
+
+    text-overflow: ellipsis;
+
+    font-family: monospace;
+
+}
+
+
+.file:hover {
+
+    background: #21262d;
+
+}
+
+
+.file.active {
+
+    background: #30363d;
+
+}
+
+
+/* MAIN */
+
+#main {
+
+    flex: 1;
+
+    min-width: 0;
+
+    display: flex;
+
+    flex-direction: column;
+
+}
+
+
+#filename {
+
+    height: 38px;
+
+    padding:
+        10px 12px;
+
+    background: #0d1117;
+
+    border-bottom:
+        1px solid #30363d;
+
+    font-family: monospace;
+
+}
+
+
+#editor {
+
+    flex: 1;
+
+    width: 100%;
+
+    resize: none;
+
+    outline: none;
+
+    border: none;
+
+    padding: 14px;
+
+    background: #0d1117;
+
+    color: #e6edf3;
+
+    font-family: monospace;
+
+    font-size: 15px;
+
+    line-height: 1.5;
+
+    tab-size: 4;
+
+}
+
+
+/* TERMINAL */
+
+#terminal {
+
+    height: 190px;
+
+    flex-shrink: 0;
+
+    display: flex;
+
+    flex-direction: column;
+
+    background: #010409;
+
+    border-top:
+        1px solid #30363d;
+
+}
+
+
+.term-head {
+
+    padding:
+        8px 12px;
+
+    border-bottom:
+        1px solid #21262d;
+
+    color: #8b949e;
+
+    font-size: 13px;
+
+}
+
+
+#output {
+
+    flex: 1;
+
+    margin: 0;
+
+    padding: 12px;
+
+    overflow: auto;
+
+    white-space: pre-wrap;
+
+    font-family: monospace;
+
+}
+
+
+/* MOBILE */
+
+@media (max-width: 700px) {
+
+    #sidebar {
+
+        width: 155px;
+
+    }
+
+    header {
+
+        gap: 5px;
+
+    }
+
+    button {
+
+        padding:
+            7px 8px;
+
+        font-size: 12px;
+
+    }
+
+    #terminal {
+
+        height: 160px;
+
+    }
+
+}
+
+</style>
+
 </head>
+
 
 <body>
 
-<header>
-    <div class="title">🐍 Python IDE</div>
 
-    <button id="runButton" onclick="runCode()">
+<header>
+
+    <div class="title">
+        🐍 Python IDE
+    </div>
+
+    <button onclick="newProject()">
+        ＋ Project
+    </button>
+
+    <button onclick="newFile()">
+        ＋ File
+    </button>
+
+    <button onclick="saveFile()">
+        💾 Save
+    </button>
+
+    <button
+        class="run"
+        id="runButton"
+        onclick="runCurrent()"
+    >
         ▶ Run
     </button>
+
 </header>
 
-<textarea id="editor">print("Hello from Render!")
 
-for i in range(5):
-    print(i)</textarea>
+<div id="workspace">
 
-<div id="output">Output will appear here...</div>
+
+<aside id="sidebar">
+
+
+<div class="sidebar-head">
+
+<select
+    id="projectSelect"
+    onchange="switchProject()"
+></select>
+
+</div>
+
+
+<div id="files"></div>
+
+
+</aside>
+
+
+<main id="main">
+
+
+<div id="filename">
+    No file selected
+</div>
+
+
+<textarea
+    id="editor"
+    spellcheck="false"
+    placeholder="Select a file..."
+></textarea>
+
+
+<div id="terminal">
+
+<div class="term-head">
+    TERMINAL / OUTPUT
+</div>
+
+<pre id="output">
+Ready.
+</pre>
+
+</div>
+
+
+</main>
+
+</div>
+
 
 <script>
-async function runCode() {
-    const button = document.getElementById("runButton");
-    const editor = document.getElementById("editor");
-    const output = document.getElementById("output");
+
+
+let currentProject = null;
+
+let currentFile = null;
+
+
+const editor =
+    document.getElementById("editor");
+
+const output =
+    document.getElementById("output");
+
+
+async function api(
+    url,
+    options = {}
+) {
+
+    const response =
+        await fetch(
+            url,
+            options
+        );
+
+    const data =
+        await response.json();
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.error ||
+            "Request failed"
+        );
+
+    }
+
+    return data;
+}
+
+
+/* PROJECTS */
+
+async function loadProjects() {
+
+    const data =
+        await api(
+            "/api/projects"
+        );
+
+    const select =
+        document.getElementById(
+            "projectSelect"
+        );
+
+    select.innerHTML = "";
+
+
+    for (
+        const project
+        of data.projects
+    ) {
+
+        const option =
+            document.createElement(
+                "option"
+            );
+
+        option.value =
+            project.id;
+
+        option.textContent =
+            project.name;
+
+        select.appendChild(
+            option
+        );
+
+    }
+
+
+    if (
+        data.projects.length === 0
+    ) {
+
+        await newProject(true);
+
+        return;
+
+    }
+
+
+    currentProject =
+        data.projects[0].id;
+
+    select.value =
+        currentProject;
+
+    await loadFiles();
+
+}
+
+
+async function newProject(
+    silent = false
+) {
+
+    const name =
+        prompt(
+            "Project name:",
+            "my-project"
+        );
+
+
+    if (name === null) {
+
+        return;
+
+    }
+
+
+    const data =
+        await api(
+            "/api/projects",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+                        name: name
+                    })
+            }
+        );
+
+
+    await loadProjects();
+
+
+    document.getElementById(
+        "projectSelect"
+    ).value =
+        data.id;
+
+
+    currentProject =
+        data.id;
+
+
+    await loadFiles();
+
+
+    if (!silent) {
+
+        output.textContent =
+            "Created project: " +
+            data.id;
+
+    }
+
+}
+
+
+async function switchProject() {
+
+    currentProject =
+        document.getElementById(
+            "projectSelect"
+        ).value;
+
+
+    currentFile = null;
+
+    await loadFiles();
+
+}
+
+
+/* FILES */
+
+async function loadFiles() {
+
+    const data =
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/files`
+        );
+
+
+    const container =
+        document.getElementById(
+            "files"
+        );
+
+
+    container.innerHTML = "";
+
+
+    for (
+        const path
+        of data.files
+    ) {
+
+        const div =
+            document.createElement(
+                "div"
+            );
+
+
+        div.className =
+            "file";
+
+
+        div.textContent =
+            "📄 " + path;
+
+
+        div.title =
+            path;
+
+
+        div.onclick =
+            () => openFile(path);
+
+
+        if (
+            path === currentFile
+        ) {
+
+            div.classList.add(
+                "active"
+            );
+
+        }
+
+
+        container.appendChild(
+            div
+        );
+
+    }
+
+
+    if (
+        !currentFile &&
+        data.files.length
+    ) {
+
+        await openFile(
+            data.files[0]
+        );
+
+    }
+
+}
+
+
+async function openFile(path) {
+
+    if (
+        currentFile &&
+        editor.value !==
+        editor.dataset.saved
+    ) {
+
+        const save =
+            confirm(
+                "You have unsaved changes. Save them?"
+            );
+
+
+        if (save) {
+
+            await saveFile();
+
+        }
+
+    }
+
+
+    const data =
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/file?path=${encodeURIComponent(
+                path
+            )}`
+        );
+
+
+    currentFile =
+        path;
+
+
+    editor.value =
+        data.content;
+
+
+    editor.dataset.saved =
+        data.content;
+
+
+    document.getElementById(
+        "filename"
+    ).textContent =
+        path;
+
+
+    await loadFiles();
+
+}
+
+
+async function saveFile() {
+
+    if (
+        !currentProject ||
+        !currentFile
+    ) {
+
+        return;
+
+    }
+
+
+    await api(
+        `/api/projects/${encodeURIComponent(
+            currentProject
+        )}/file`,
+        {
+
+            method: "POST",
+
+            headers: {
+                "Content-Type":
+                    "application/json"
+            },
+
+            body:
+                JSON.stringify({
+
+                    path:
+                        currentFile,
+
+                    content:
+                        editor.value
+
+                })
+
+        }
+    );
+
+
+    editor.dataset.saved =
+        editor.value;
+
+
+    output.textContent =
+        "Saved: " + currentFile;
+
+
+    await loadFiles();
+
+}
+
+
+async function newFile() {
+
+    if (!currentProject) {
+
+        return;
+
+    }
+
+
+    const path =
+        prompt(
+            "File path:",
+            "test.py"
+        );
+
+
+    if (
+        path === null ||
+        !path.trim()
+    ) {
+
+        return;
+
+    }
+
+
+    const cleanPath =
+        path.trim();
+
+
+    await api(
+        `/api/projects/${encodeURIComponent(
+            currentProject
+        )}/file`,
+        {
+
+            method: "POST",
+
+            headers: {
+                "Content-Type":
+                    "application/json"
+            },
+
+            body:
+                JSON.stringify({
+
+                    path:
+                        cleanPath,
+
+                    content:
+                        ""
+
+                })
+
+        }
+    );
+
+
+    await loadFiles();
+
+    await openFile(
+        cleanPath
+    );
+
+}
+
+
+/* RUN */
+
+async function runCurrent() {
+
+    if (!currentFile) {
+
+        output.textContent =
+            "Select a file first.";
+
+        return;
+
+    }
+
+
+    if (
+        editor.value !==
+        editor.dataset.saved
+    ) {
+
+        await saveFile();
+
+    }
+
+
+    if (
+        !currentFile.endsWith(
+            ".py"
+        )
+    ) {
+
+        output.textContent =
+            "Only .py files can be run.";
+
+        return;
+
+    }
+
+
+    const button =
+        document.getElementById(
+            "runButton"
+        );
+
 
     button.disabled = true;
-    button.textContent = "Running...";
-    output.textContent = "Running...";
+
+    button.textContent =
+        "Running...";
+
+
+    output.textContent =
+        "Running...";
+
 
     try {
-        const response = await fetch("/run", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                code: editor.value
-            })
-        });
 
-        const result = await response.json();
+        const data =
+            await api(
+                "/run",
+                {
+
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            code:
+                                editor.value
+                        })
+
+                }
+            );
+
 
         let text = "";
 
-        if (result.stdout) {
-            text += result.stdout;
+
+        if (data.stdout) {
+
+            text += data.stdout;
+
         }
 
-        if (result.stderr) {
-            if (text) text += "\n";
-            text += result.stderr;
+
+        if (data.stderr) {
+
+            if (text) {
+
+                text += "\n";
+
+            }
+
+            text += data.stderr;
+
         }
+
 
         if (!text) {
-            text = "(No output)";
+
+            text =
+                "(No output)";
+
         }
 
-        output.textContent = text;
+
+        output.textContent =
+            text;
+
 
     } catch (error) {
-        output.textContent = "Connection error: " + error;
+
+        output.textContent =
+            "Error: " +
+            error.message;
+
 
     } finally {
-        button.disabled = false;
-        button.textContent = "▶ Run";
+
+        button.disabled =
+            false;
+
+        button.textContent =
+            "▶ Run";
+
     }
+
 }
+
+
+/* EDITOR SHORTCUTS */
+
+editor.addEventListener(
+    "keydown",
+    function(event) {
+
+        if (
+            event.key === "Tab"
+        ) {
+
+            event.preventDefault();
+
+
+            const start =
+                editor.selectionStart;
+
+            const end =
+                editor.selectionEnd;
+
+
+            editor.value =
+                editor.value.substring(
+                    0,
+                    start
+                )
+                +
+                "    "
+                +
+                editor.value.substring(
+                    end
+                );
+
+
+            editor.selectionStart =
+                editor.selectionEnd =
+                    start + 4;
+
+        }
+
+
+        if (
+            (event.ctrlKey ||
+             event.metaKey) &&
+            event.key.toLowerCase()
+                === "s"
+        ) {
+
+            event.preventDefault();
+
+            saveFile();
+
+        }
+
+    }
+);
+
+
+/* START */
+
+loadProjects().catch(
+    error => {
+
+        output.textContent =
+            "Startup error: " +
+            error.message;
+
+    }
+);
+
 </script>
 
 </body>
+
 </html>
