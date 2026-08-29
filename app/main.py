@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import os
 import subprocess
+import sys
 import tempfile
 import uuid
 import shutil
@@ -12,9 +13,18 @@ import shutil
 
 app = FastAPI(title="Python IDE")
 
+# Resolve paths relative to this file instead of the process's current
+# working directory. Previously these were relative strings like
+# "app/static", which only worked if the server happened to be started
+# from the exact project root. Running it any other way (e.g. `python
+# app/main.py`, or a different WORKDIR) raised a startup error because
+# the directory couldn't be found.
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
 app.mount(
     "/static",
-    StaticFiles(directory="app/static"),
+    StaticFiles(directory=str(STATIC_DIR)),
     name="static"
 )
 
@@ -109,7 +119,7 @@ def list_files(folder: Path):
 async def index():
 
     return FileResponse(
-        "app/static/index.html"
+        str(STATIC_DIR / "index.html")
     )
 
 
@@ -630,7 +640,15 @@ async def run_project(
             process = subprocess.run(
 
                 [
-                    "python",
+                    # Use the exact interpreter running this server
+                    # (sys.executable) instead of the bare "python"
+                    # command. On many systems - most Linux distros,
+                    # macOS, and some cloud environments - only
+                    # "python3" is on PATH, not "python". That mismatch
+                    # made every run fail with a "No such file or
+                    # directory: 'python'" error even though the code
+                    # itself was fine.
+                    sys.executable,
                     "-u",
                     str(execution_file)
                 ],
