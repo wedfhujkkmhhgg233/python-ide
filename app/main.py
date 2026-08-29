@@ -1,14 +1,31 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from pathlib import Path
+import asyncio
+import json
 import os
+import signal
+import struct
 import subprocess
 import sys
 import tempfile
 import uuid
 import shutil
+
+# fcntl/termios/pty are POSIX-only. The container this runs in
+# (python:3.12-slim on Linux) always has them, but importing this
+# way means the app still starts (with the terminal feature simply
+# disabled) if it's ever run somewhere without them.
+try:
+    import fcntl
+    import termios
+    import pty
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    fcntl = None
+    termios = None
+    pty = None
 
 
 app = FastAPI(title="Python IDE")
@@ -838,3 +855,318 @@ async def run_project(
                 "returncode": -1
 
             }
+
+
+# =========================================================
+# INTERACTIVE TERMINAL (real shell over WebSocket + PTY)
+# =========================================================
+#
+# This is a genuine, interactive terminal attached to a real
+# shell process running inside the project's folder - not a
+# canned "run and capture output" call. That's what makes
+# `pip install <package>`, running a script with `python
+# file.py` (including ones that call input()), `ls`, `git`,
+# long-running programs, etc. all work exactly as they would
+# in a local terminal or in VS Code's integrated terminal.
+
+TERMINAL_SHELL = (
+    shutil.which("bash")
+    or shutil.which("sh")
+    or "/bin/sh"
+)
+
+
+async def _reap_child(pid: int) -> None:
+    """
+    Wait for a terminal's shell process to exit and reap it,
+    escalating to SIGKILL if it lingers. Runs as a detached
+    background task so closing a websocket never has to
+    block on this.
+    """
+
+    for _ in range(15):
+
+        try:
+            reaped_pid, _status = os.waitpid(
+                pid,
+                os.WNOHANG
+            )
+
+        except ChildProcessError:
+            return
+
+        if reaped_pid == pid:
+            return
+
+        await asyncio.sleep(0.2)
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+
+    except ProcessLookupError:
+        pass
+
+    try:
+        os.waitpid(pid, 0)
+
+    except ChildProcessError:
+        pass
+
+
+@app.websocket(
+    "/ws/projects/{project_id}/terminal"
+)
+async def project_terminal(
+    websocket: WebSocket,
+    project_id: str
+):
+
+    await websocket.accept()
+
+    try:
+        project = project_path(project_id)
+
+    except ValueError:
+        await websocket.close(code=4000)
+        return
+
+    if not project.is_dir():
+        await websocket.close(code=4004)
+        return
+
+    if pty is None:
+
+        await websocket.send_text(
+            json.dumps({
+                "type": "error",
+                "message":
+                    "Interactive terminals are not "
+                    "supported on this server."
+            })
+        )
+
+        await websocket.close(code=1011)
+        return
+
+    try:
+        pid, fd = pty.fork()
+
+    except OSError as error:
+
+        await websocket.send_text(
+            json.dumps({
+                "type": "error",
+                "message":
+                    "Could not start a terminal: "
+                    + str(error)
+            })
+        )
+
+        await websocket.close(code=1011)
+        return
+
+    if pid == 0:
+
+        # ---------------------------------------------
+        # CHILD PROCESS: this becomes the interactive
+        # shell. pty.fork() already wired fds 0/1/2 to
+        # the pty slave, so from here on this process
+        # *is* the terminal.
+        # ---------------------------------------------
+
+        try:
+            os.chdir(str(project))
+
+        except Exception:
+            pass
+
+        # Close anything else inherited from the server
+        # process (listening sockets, other clients'
+        # connections, log files) so the shell doesn't
+        # hang on to them.
+        try:
+            os.closerange(3, 1024)
+
+        except Exception:
+            pass
+
+        env = os.environ.copy()
+        env["TERM"] = "xterm-256color"
+        env["PYTHONUNBUFFERED"] = "1"
+        env.setdefault("LANG", "C.UTF-8")
+        env.setdefault("LC_ALL", "C.UTF-8")
+        env["PS1"] = "\\[\\e[36m\\]\\W\\[\\e[0m\\] $ "
+
+        try:
+            os.execvpe(
+                TERMINAL_SHELL,
+                [TERMINAL_SHELL],
+                env
+            )
+
+        except Exception:
+            os._exit(1)
+
+    # -----------------------------------------------------
+    # PARENT PROCESS continues here, proxying bytes between
+    # the websocket and the pty's master file descriptor.
+    # -----------------------------------------------------
+
+    os.set_blocking(fd, False)
+
+    loop = asyncio.get_running_loop()
+    output_queue = asyncio.Queue()
+
+    def _on_readable():
+
+        try:
+            data = os.read(fd, 65536)
+
+        except OSError:
+            data = b""
+
+        if not data:
+
+            try:
+                loop.remove_reader(fd)
+
+            except Exception:
+                pass
+
+        output_queue.put_nowait(data)
+
+    loop.add_reader(fd, _on_readable)
+
+    async def pump_output():
+
+        while True:
+
+            data = await output_queue.get()
+
+            if not data:
+
+                try:
+                    await websocket.send_text(
+                        json.dumps({"type": "exit"})
+                    )
+
+                except Exception:
+                    pass
+
+                break
+
+            try:
+                await websocket.send_bytes(data)
+
+            except Exception:
+                break
+
+    async def pump_input():
+
+        while True:
+
+            message = await websocket.receive()
+
+            if message["type"] == "websocket.disconnect":
+                break
+
+            text = message.get("text")
+
+            if text is not None:
+
+                try:
+                    payload = json.loads(text)
+
+                except ValueError:
+                    continue
+
+                kind = payload.get("type")
+
+                if kind == "input":
+
+                    data = payload.get("data", "")
+
+                    try:
+                        os.write(
+                            fd,
+                            data.encode(
+                                "utf-8",
+                                errors="ignore"
+                            )
+                        )
+
+                    except OSError:
+                        break
+
+                elif kind == "resize":
+
+                    try:
+                        cols = int(payload.get("cols", 80))
+                        rows = int(payload.get("rows", 24))
+
+                        winsize = struct.pack(
+                            "HHHH", rows, cols, 0, 0
+                        )
+
+                        fcntl.ioctl(
+                            fd,
+                            termios.TIOCSWINSZ,
+                            winsize
+                        )
+
+                    except Exception:
+                        pass
+
+                continue
+
+            raw = message.get("bytes")
+
+            if raw:
+
+                try:
+                    os.write(fd, raw)
+
+                except OSError:
+                    break
+
+    output_task = asyncio.create_task(pump_output())
+    input_task = asyncio.create_task(pump_input())
+
+    try:
+        await asyncio.wait(
+            {output_task, input_task},
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+    finally:
+
+        for task in (output_task, input_task):
+            task.cancel()
+
+        try:
+            loop.remove_reader(fd)
+
+        except Exception:
+            pass
+
+        try:
+            os.kill(pid, signal.SIGHUP)
+
+        except ProcessLookupError:
+            pass
+
+        try:
+            os.close(fd)
+
+        except OSError:
+            pass
+
+        asyncio.create_task(
+            _reap_child(pid)
+        )
+
+        try:
+            await websocket.close()
+
+        except Exception:
+            pass
