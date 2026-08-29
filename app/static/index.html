@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>Python IDE</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: #111;
+            color: #eee;
+            font-family: Arial, sans-serif;
+        }
+
+        header {
+            height: 55px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 15px;
+            background: #181818;
+            border-bottom: 1px solid #333;
+        }
+
+        button {
+            border: none;
+            border-radius: 6px;
+            padding: 9px 18px;
+            background: #2ea043;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+        }
+
+        #editor {
+            width: 100%;
+            height: 55vh;
+            resize: none;
+            border: none;
+            outline: none;
+            padding: 15px;
+            background: #0d1117;
+            color: #eee;
+            font-family: monospace;
+            font-size: 15px;
+            line-height: 1.5;
+        }
+
+        #output {
+            padding: 15px;
+            min-height: 35vh;
+            background: #080808;
+            white-space: pre-wrap;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+
+        .title {
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <div class="title">🐍 Python IDE</div>
+
+    <button id="runButton" onclick="runCode()">
+        ▶ Run
+    </button>
+</header>
+
+<textarea id="editor">print("Hello from Render!")
+
+for i in range(5):
+    print(i)</textarea>
+
+<div id="output">Output will appear here...</div>
+
+<script>
+async function runCode() {
+    const button = document.getElementById("runButton");
+    const editor = document.getElementById("editor");
+    const output = document.getElementById("output");
+
+    button.disabled = true;
+    button.textContent = "Running...";
+    output.textContent = "Running...";
+
+    try {
+        const response = await fetch("/run", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                code: editor.value
+            })
+        });
+
+        const result = await response.json();
+
+        let text = "";
+
+        if (result.stdout) {
+            text += result.stdout;
+        }
+
+        if (result.stderr) {
+            if (text) text += "\n";
+            text += result.stderr;
+        }
+
+        if (!text) {
+            text = "(No output)";
+        }
+
+        output.textContent = text;
+
+    } catch (error) {
+        output.textContent = "Connection error: " + error;
+
+    } finally {
+        button.disabled = false;
+        button.textContent = "▶ Run";
+    }
+}
+</script>
+
+</body>
+</html>
