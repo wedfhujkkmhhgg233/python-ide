@@ -491,6 +491,138 @@ async def delete_file(
 
 
 # =========================================================
+# RENAME / MOVE FILE
+# =========================================================
+
+@app.post(
+    "/api/projects/{project_id}/file/rename"
+)
+async def rename_file(
+    project_id: str,
+    request: Request
+):
+
+    try:
+
+        folder = project_path(
+            project_id
+        )
+
+    except ValueError:
+
+        return JSONResponse(
+            {
+                "error":
+                "Invalid project ID"
+            },
+            status_code=400
+        )
+
+
+    if not folder.is_dir():
+
+        return JSONResponse(
+            {
+                "error":
+                "Project not found"
+            },
+            status_code=404
+        )
+
+
+    data = await request.json()
+
+    old_path = str(
+        data.get(
+            "old_path",
+            ""
+        )
+    ).strip()
+
+    new_path = str(
+        data.get(
+            "new_path",
+            ""
+        )
+    ).strip()
+
+
+    if not old_path or not new_path:
+
+        return JSONResponse(
+            {
+                "error":
+                "old_path and new_path are required"
+            },
+            status_code=400
+        )
+
+
+    try:
+
+        old_relative = safe_relative_path(
+            old_path
+        )
+
+        new_relative = safe_relative_path(
+            new_path
+        )
+
+        source = folder / old_relative
+
+        destination = folder / new_relative
+
+    except ValueError:
+
+        return JSONResponse(
+            {
+                "error":
+                "Invalid path"
+            },
+            status_code=400
+        )
+
+
+    if not source.is_file():
+
+        return JSONResponse(
+            {
+                "error":
+                "File not found"
+            },
+            status_code=404
+        )
+
+
+    if destination.exists():
+
+        return JSONResponse(
+            {
+                "error":
+                "A file already exists at that path"
+            },
+            status_code=409
+        )
+
+
+    destination.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+
+    source.rename(
+        destination
+    )
+
+
+    return {
+        "ok": True,
+        "path": new_relative.as_posix()
+    }
+
+
+# =========================================================
 # RUN ENTIRE PROJECT
 # =========================================================
 
