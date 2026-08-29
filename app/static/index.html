@@ -46,6 +46,27 @@
     ></script>
 
 
+    <!-- =========================
+         TERMINAL (xterm.js)
+         A real, interactive terminal
+         attached to a shell process
+         running server-side.
+    ========================= -->
+
+    <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"
+    >
+
+    <script
+        src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"
+    ></script>
+
+    <script
+        src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"
+    ></script>
+
+
     <style>
 
         * {
@@ -888,8 +909,10 @@
 
             align-items: center;
 
+            justify-content: space-between;
+
             padding:
-                0 12px;
+                0 8px 0 4px;
 
             border-bottom:
                 1px solid #21262d;
@@ -899,6 +922,148 @@
             font-size: 12px;
 
             font-weight: bold;
+
+        }
+
+
+        .term-tabs {
+
+            display: flex;
+
+            align-items: center;
+
+            height: 100%;
+
+        }
+
+
+        .term-tab {
+
+            background: transparent;
+
+            border: none;
+
+            border-bottom:
+                2px solid transparent;
+
+            border-radius: 0;
+
+            color: #8b949e;
+
+            font-size: 11px;
+
+            font-weight: bold;
+
+            letter-spacing: 0.5px;
+
+            height: 100%;
+
+            padding: 0 10px;
+
+            cursor: pointer;
+
+        }
+
+
+        .term-tab:hover {
+
+            background: transparent;
+
+            color: #e6edf3;
+
+        }
+
+
+        .term-tab.active {
+
+            color: #e6edf3;
+
+            border-bottom-color: #58a6ff;
+
+        }
+
+
+        .term-toolbar {
+
+            display: none;
+
+            align-items: center;
+
+            gap: 6px;
+
+        }
+
+
+        .term-toolbar.show {
+
+            display: flex;
+
+        }
+
+
+        .term-tool-btn {
+
+            padding: 3px 8px;
+
+            font-size: 11px;
+
+            min-height: 0;
+
+        }
+
+
+        .term-status-dot {
+
+            width: 8px;
+
+            height: 8px;
+
+            border-radius: 50%;
+
+            background: #6e7681;
+
+            flex-shrink: 0;
+
+        }
+
+
+        .term-status-dot.connecting {
+
+            background: #d29922;
+
+        }
+
+
+        .term-status-dot.connected {
+
+            background: #3fb950;
+
+        }
+
+
+        .term-status-dot.error {
+
+            background: #f85149;
+
+        }
+
+
+        .term-pane {
+
+            display: none;
+
+            flex: 1;
+
+            min-height: 0;
+
+            flex-direction: column;
+
+        }
+
+
+        .term-pane.active {
+
+            display: flex;
 
         }
 
@@ -929,6 +1094,27 @@
             font-size: 13px;
 
             line-height: 1.5;
+
+        }
+
+
+        #xtermContainer {
+
+            flex: 1;
+
+            min-height: 0;
+
+            padding:
+                8px 4px 4px 8px;
+
+            overflow: hidden;
+
+        }
+
+
+        #xtermContainer .xterm {
+
+            height: 100%;
 
         }
 
@@ -1177,9 +1363,18 @@
         id="runButton"
         class="run-button"
         onclick="runCurrent()"
-        title="Run current Python file"
+        title="Run current Python file in the terminal"
     >
         ▶ Run
+    </button>
+
+
+    <button
+        id="installButton"
+        onclick="installRequirements()"
+        title="pip install -r requirements.txt"
+    >
+        📦 Install
     </button>
 
 
@@ -1296,12 +1491,77 @@
 
             <div class="terminal-header">
 
-                TERMINAL / OUTPUT
+                <div class="term-tabs">
+
+                    <button
+                        id="outputTabBtn"
+                        class="term-tab active"
+                        onclick="setBottomTab('output')"
+                    >
+                        OUTPUT
+                    </button>
+
+                    <button
+                        id="terminalTabBtn"
+                        class="term-tab"
+                        onclick="setBottomTab('terminal')"
+                    >
+                        TERMINAL
+                    </button>
+
+                </div>
+
+
+                <div
+                    id="terminalToolbar"
+                    class="term-toolbar"
+                >
+
+                    <span
+                        id="termStatusDot"
+                        class="term-status-dot"
+                        title="Disconnected"
+                    ></span>
+
+                    <button
+                        class="term-tool-btn"
+                        onclick="restartTerminal()"
+                        title="Start a fresh shell"
+                    >
+                        ⟳ Restart
+                    </button>
+
+                    <button
+                        class="term-tool-btn"
+                        onclick="clearTerminalView()"
+                        title="Clear the screen"
+                    >
+                        🧹 Clear
+                    </button>
+
+                </div>
 
             </div>
 
 
-            <pre id="output">Ready.</pre>
+            <div
+                id="outputPane"
+                class="term-pane active"
+            >
+
+                <pre id="output">Ready.</pre>
+
+            </div>
+
+
+            <div
+                id="xtermPane"
+                class="term-pane"
+            >
+
+                <div id="xtermContainer"></div>
+
+            </div>
 
 
         </section>
@@ -1468,6 +1728,488 @@ const output =
     document.getElementById(
         "output"
     );
+
+
+
+/* =====================================================
+   INTERACTIVE TERMINAL (xterm.js + WebSocket)
+
+   A real shell running server-side, in the project's
+   folder. This is what "Run" uses (so scripts run with
+   no timeout and input() works), and it's also just a
+   normal terminal you can type into - `pip install x`,
+   `ls`, whatever.
+===================================================== */
+
+
+const outputTabBtn =
+    document.getElementById("outputTabBtn");
+
+const terminalTabBtn =
+    document.getElementById("terminalTabBtn");
+
+const outputPane =
+    document.getElementById("outputPane");
+
+const xtermPane =
+    document.getElementById("xtermPane");
+
+const terminalToolbar =
+    document.getElementById("terminalToolbar");
+
+const termStatusDot =
+    document.getElementById("termStatusDot");
+
+
+let bottomTab = "output";
+
+let term = null;
+let fitAddon = null;
+let termSocket = null;
+let termConnectedProject = null;
+let termConnecting = false;
+
+
+function setTermStatus(status, title) {
+
+    termStatusDot.className =
+        "term-status-dot" +
+        (status !== "disconnected" ? " " + status : "");
+
+    termStatusDot.title =
+        title || status;
+
+}
+
+
+function ensureTerminalWidget() {
+
+    if (term) {
+        return;
+    }
+
+    term = new Terminal({
+        convertEol: true,
+        cursorBlink: true,
+        fontFamily: '"Courier New", monospace',
+        fontSize: 13,
+        scrollback: 5000,
+        theme: {
+            background: "#010409",
+            foreground: "#e6edf3",
+            cursor: "#e6edf3"
+        }
+    });
+
+    fitAddon = new FitAddon.FitAddon();
+
+    term.loadAddon(fitAddon);
+
+    term.open(
+        document.getElementById("xtermContainer")
+    );
+
+    term.onData((data) => {
+
+        if (
+            termSocket &&
+            termSocket.readyState === WebSocket.OPEN
+        ) {
+
+            termSocket.send(
+                JSON.stringify({
+                    type: "input",
+                    data: data
+                })
+            );
+
+        }
+
+    });
+
+    window.addEventListener("resize", () => {
+
+        if (bottomTab === "terminal") {
+
+            try {
+                fitAddon.fit();
+            } catch {}
+
+            sendTermResize();
+
+        }
+
+    });
+
+}
+
+
+function sendTermResize() {
+
+    if (
+        !term ||
+        !termSocket ||
+        termSocket.readyState !== WebSocket.OPEN
+    ) {
+
+        return;
+
+    }
+
+    termSocket.send(
+        JSON.stringify({
+            type: "resize",
+            cols: term.cols,
+            rows: term.rows
+        })
+    );
+
+}
+
+
+function connectTerminal(projectId) {
+
+    ensureTerminalWidget();
+
+    if (termSocket) {
+
+        try {
+            termSocket.onclose = null;
+            termSocket.close();
+        } catch {}
+
+        termSocket = null;
+
+    }
+
+    termConnectedProject = projectId;
+    termConnecting = true;
+
+    setTermStatus(
+        "connecting",
+        "Connecting..."
+    );
+
+    const proto =
+        location.protocol === "https:" ?
+            "wss:" :
+            "ws:";
+
+    const url =
+        `${proto}//${location.host}` +
+        `/ws/projects/${encodeURIComponent(projectId)}/terminal`;
+
+    const socket = new WebSocket(url);
+
+    socket.binaryType = "arraybuffer";
+
+    socket.onopen = () => {
+
+        termConnecting = false;
+
+        setTermStatus(
+            "connected",
+            "Connected"
+        );
+
+        try {
+            fitAddon.fit();
+        } catch {}
+
+        sendTermResize();
+
+        term.focus();
+
+    };
+
+    socket.onmessage = (event) => {
+
+        if (event.data instanceof ArrayBuffer) {
+
+            term.write(
+                new Uint8Array(event.data)
+            );
+
+            return;
+
+        }
+
+        try {
+
+            const msg =
+                JSON.parse(event.data);
+
+            if (msg.type === "exit") {
+
+                term.write(
+                    "\r\n\x1b[90m[shell exited - " +
+                    "click Restart to start a new one]" +
+                    "\x1b[0m\r\n"
+                );
+
+                setTermStatus(
+                    "disconnected",
+                    "Shell exited"
+                );
+
+            }
+
+            else if (msg.type === "error") {
+
+                term.write(
+                    "\r\n\x1b[31m" +
+                    msg.message +
+                    "\x1b[0m\r\n"
+                );
+
+                setTermStatus(
+                    "error",
+                    msg.message
+                );
+
+            }
+
+        }
+
+        catch {
+
+            term.write(event.data);
+
+        }
+
+    };
+
+    socket.onclose = () => {
+
+        termConnecting = false;
+
+        if (termSocket === socket) {
+
+            setTermStatus(
+                "disconnected",
+                "Disconnected"
+            );
+
+        }
+
+    };
+
+    socket.onerror = () => {
+
+        setTermStatus(
+            "error",
+            "Connection error"
+        );
+
+    };
+
+    termSocket = socket;
+
+}
+
+
+function ensureTerminalConnected() {
+
+    if (!currentProject) {
+        return;
+    }
+
+    if (
+        termConnectedProject === currentProject &&
+        termSocket &&
+        (
+            termSocket.readyState === WebSocket.OPEN ||
+            termConnecting
+        )
+    ) {
+
+        return;
+
+    }
+
+    if (term) {
+        term.reset();
+    }
+
+    connectTerminal(currentProject);
+
+}
+
+
+function restartTerminal() {
+
+    if (!currentProject) {
+        return;
+    }
+
+    if (term) {
+        term.reset();
+    }
+
+    connectTerminal(currentProject);
+
+}
+
+
+function clearTerminalView() {
+
+    if (term) {
+        term.clear();
+    }
+
+}
+
+
+function setBottomTab(tab) {
+
+    bottomTab = tab;
+
+    outputTabBtn.classList.toggle(
+        "active",
+        tab === "output"
+    );
+
+    terminalTabBtn.classList.toggle(
+        "active",
+        tab === "terminal"
+    );
+
+    outputPane.classList.toggle(
+        "active",
+        tab === "output"
+    );
+
+    xtermPane.classList.toggle(
+        "active",
+        tab === "terminal"
+    );
+
+    terminalToolbar.classList.toggle(
+        "show",
+        tab === "terminal"
+    );
+
+    if (tab === "terminal") {
+
+        ensureTerminalConnected();
+
+        requestAnimationFrame(() => {
+
+            if (fitAddon) {
+
+                try {
+                    fitAddon.fit();
+                } catch {}
+
+                sendTermResize();
+
+            }
+
+            if (term) {
+                term.focus();
+            }
+
+        });
+
+    }
+
+}
+
+
+function shellQuote(value) {
+
+    return (
+        "'" +
+        String(value).replace(
+            /'/g,
+            "'\\''"
+        ) +
+        "'"
+    );
+
+}
+
+
+function sendTerminalCommand(command, attempt) {
+
+    if (!currentProject) {
+        return;
+    }
+
+    attempt = attempt || 0;
+
+    setBottomTab("terminal");
+
+    if (
+        termConnectedProject !== currentProject ||
+        !termSocket ||
+        (
+            termSocket.readyState !== WebSocket.OPEN &&
+            !termConnecting
+        )
+    ) {
+
+        connectTerminal(currentProject);
+
+    }
+
+    if (
+        termSocket &&
+        termSocket.readyState === WebSocket.OPEN
+    ) {
+
+        /*
+         * Ctrl+C first, in case something is already
+         * running in this terminal, then the new command.
+         */
+
+        termSocket.send(
+            JSON.stringify({
+                type: "input",
+                data: "\u0003"
+            })
+        );
+
+        termSocket.send(
+            JSON.stringify({
+                type: "input",
+                data: command + "\r"
+            })
+        );
+
+    }
+
+    else if (attempt < 40) {
+
+        /* Socket is still opening - retry briefly. */
+
+        setTimeout(
+            () => sendTerminalCommand(command, attempt + 1),
+            150
+        );
+
+    }
+
+}
+
+
+function installRequirements() {
+
+    if (!currentProject) {
+
+        alert(
+            "Select a project first."
+        );
+
+        return;
+
+    }
+
+    sendTerminalCommand(
+        "pip install -r requirements.txt"
+    );
+
+}
 
 
 const projectSelect =
@@ -2250,6 +2992,13 @@ async function newProject() {
         await loadFiles();
 
 
+        if (bottomTab === "terminal") {
+
+            ensureTerminalConnected();
+
+        }
+
+
         output.textContent =
             "Created project:\n" +
             data.id;
@@ -2353,6 +3102,13 @@ async function switchProject() {
 
 
     await loadFiles();
+
+
+    if (bottomTab === "terminal") {
+
+        ensureTerminalConnected();
+
+    }
 
 }
 
@@ -3046,24 +3802,19 @@ async function runCurrent() {
     }
 
 
-
-    runButton.disabled =
-        true;
-
-
-    runButton.textContent =
-        "Running...";
-
-
-    output.textContent =
-        "Running project...\n\n" +
-        "Entry file: " +
-        currentFile;
-
-
     /*
-     * On mobile, jump to the Output tab so the user
-     * doesn't have to switch manually to see the result.
+     * Running now happens in the real interactive
+     * terminal instead of the old sandboxed/timed-out
+     * subprocess call. This means:
+     *
+     *  - no artificial time limit
+     *  - input() prompts actually work
+     *  - normal stdout/stderr colors and formatting
+     *  - the process can be interrupted with Ctrl+C
+     *    directly in the terminal
+     *
+     * On mobile this also switches to the Output/Terminal
+     * tab so the user doesn't have to switch manually.
      */
 
     if (
@@ -3077,142 +3828,10 @@ async function runCurrent() {
     }
 
 
-
-    try {
-
-
-        /*
-         * IMPORTANT:
-         *
-         * We now call:
-         *
-         * /api/projects/{project}/run
-         *
-         * instead of the old /run endpoint.
-         *
-         * The backend copies the entire
-         * project into a temporary directory.
-         *
-         * Therefore imports such as:
-         *
-         * from utils import add
-         *
-         * work correctly.
-         */
-
-        const data =
-            await api(
-                `/api/projects/${encodeURIComponent(
-                    currentProject
-                )}/run`,
-                {
-
-                    method: "POST",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body:
-                        JSON.stringify({
-
-                            entry:
-                                currentFile
-
-                        })
-
-                }
-            );
-
-
-
-        let text =
-            "";
-
-
-        /*
-         * Standard output.
-         */
-
-        if (
-            data.stdout
-        ) {
-
-            text +=
-                data.stdout;
-
-        }
-
-
-        /*
-         * Errors / stderr.
-         */
-
-        if (
-            data.stderr
-        ) {
-
-
-            if (text) {
-
-                text +=
-                    "\n";
-
-            }
-
-
-            text +=
-                data.stderr;
-
-        }
-
-
-        if (!text) {
-
-            text =
-                "(No output)";
-
-        }
-
-
-        /*
-         * Add exit status.
-         */
-
-        text +=
-            "\n\n--- Process exited with code " +
-            data.returncode +
-            " ---";
-
-
-        output.textContent =
-            text;
-
-
-    }
-
-    catch (error) {
-
-
-        output.textContent =
-            "Run failed:\n\n" +
-            error.message;
-
-    }
-
-
-    finally {
-
-
-        runButton.disabled =
-            false;
-
-
-        runButton.textContent =
-            "▶ Run";
-
-    }
+    sendTerminalCommand(
+        "python3 -u " +
+        shellQuote(currentFile)
+    );
 
 }
 
