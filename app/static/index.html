@@ -300,6 +300,13 @@
             background: #0d1117;
             border-bottom: 1px solid #30363d;
         }
+        #deleteLineBtn {
+            margin-left: auto;
+            padding: 5px 10px;
+            font-size: 12px;
+            min-height: 0;
+            flex-shrink: 0;
+        }
         #filename {
             font-family: monospace;
             font-size: 13px;
@@ -307,6 +314,8 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            flex: 1;
+            min-width: 0;
         }
         #dirty {
             margin-left: 7px;
@@ -637,6 +646,10 @@
             #projectSelect {
                 font-size: 16px;
             }
+            #deleteLineBtn {
+                padding: 7px 10px;
+                font-size: 13px;
+            }
         }
         @media (max-width: 480px) {
             .logo-text {
@@ -754,6 +767,13 @@
             <span id="dirty">
                 ●
             </span>
+            <button
+                id="deleteLineBtn"
+                onclick="deleteCurrentLines(cm); cm.focus();"
+                title="Delete current line (Ctrl+Shift+K)"
+            >
+                🗑️ Line
+            </button>
         </div>
         <textarea
             id="editor"
@@ -881,6 +901,43 @@ const editor = document.getElementById("editor");
  * the plain textarea. `cm` is what the rest of the app
  * reads/writes instead of editor.value directly.
  */
+/*
+ * Deletes the line(s) the cursor/selection is on,
+ * including the line break - like VS Code's Ctrl+Shift+K.
+ * Plain Backspace/Delete only remove one character at a
+ * time (which merges lines one at a time); this removes a
+ * whole line (or every line touched by the selection) in
+ * one step.
+ */
+function deleteCurrentLines(instance) {
+    const from = instance.getCursor("start");
+    const to = instance.getCursor("end");
+    const lastLine = instance.lastLine();
+    if (to.line < lastLine) {
+        instance.replaceRange(
+            "",
+            { line: from.line, ch: 0 },
+            { line: to.line + 1, ch: 0 }
+        );
+    }
+    else if (from.line > 0) {
+        instance.replaceRange(
+            "",
+            {
+                line: from.line - 1,
+                ch: instance.getLine(from.line - 1).length
+            },
+            { line: to.line, ch: instance.getLine(to.line).length }
+        );
+    }
+    else {
+        instance.replaceRange(
+            "",
+            { line: 0, ch: 0 },
+            { line: 0, ch: instance.getLine(0).length }
+        );
+    }
+}
 const cm =
     CodeMirror.fromTextArea(
         editor,
@@ -910,7 +967,9 @@ const cm =
                             "end"
                         );
                     }
-                }
+                },
+                "Ctrl-Shift-K": deleteCurrentLines,
+                "Cmd-Shift-K": deleteCurrentLines
             }
         }
     );
