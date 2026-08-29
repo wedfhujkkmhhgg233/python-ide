@@ -1,381 +1,658 @@
 <!DOCTYPE html>
-
-<html>
+<html lang="en">
 
 <head>
 
-<meta charset="UTF-8">
+    <meta charset="UTF-8">
 
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1"
->
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
-<title>Python IDE</title>
+    <title>Python IDE</title>
 
-<style>
 
-* {
-    box-sizing: border-box;
-}
+    <style>
 
-body {
+        * {
+            box-sizing: border-box;
+        }
 
-    margin: 0;
 
-    height: 100vh;
+        html,
+        body {
 
-    display: flex;
+            margin: 0;
 
-    flex-direction: column;
+            padding: 0;
 
-    background: #0d1117;
+            width: 100%;
 
-    color: #e6edf3;
+            height: 100%;
 
-    font-family: Arial, sans-serif;
+            overflow: hidden;
 
-}
+        }
 
 
-/* HEADER */
+        body {
 
-header {
+            display: flex;
 
-    height: 55px;
+            flex-direction: column;
 
-    display: flex;
+            background: #0d1117;
 
-    align-items: center;
+            color: #e6edf3;
 
-    gap: 8px;
+            font-family:
+                Arial,
+                sans-serif;
 
-    padding: 0 12px;
+        }
 
-    background: #161b22;
 
-    border-bottom:
-        1px solid #30363d;
+        /* =========================
+           HEADER
+        ========================= */
 
-    flex-shrink: 0;
+        header {
 
-}
+            height: 56px;
 
+            min-height: 56px;
 
-.title {
+            display: flex;
 
-    font-weight: bold;
+            align-items: center;
 
-    margin-right: auto;
+            gap: 7px;
 
-}
+            padding:
+                0 10px;
 
+            background: #161b22;
 
-button {
+            border-bottom:
+                1px solid #30363d;
 
-    border:
-        1px solid #30363d;
+        }
 
-    border-radius: 6px;
 
-    padding:
-        8px 12px;
+        .logo {
 
-    background: #21262d;
+            display: flex;
 
-    color: #e6edf3;
+            align-items: center;
 
-    cursor: pointer;
+            gap: 7px;
 
-}
+            font-size: 16px;
 
+            font-weight: bold;
 
-button:hover {
+            margin-right: auto;
 
-    background: #30363d;
+            white-space: nowrap;
 
-}
+        }
 
 
-.run {
+        .logo-icon {
 
-    background: #238636;
+            font-size: 20px;
 
-    border-color: #2ea043;
+        }
 
-}
 
+        button {
 
-.run:hover {
+            border:
+                1px solid #30363d;
 
-    background: #2ea043;
+            border-radius: 6px;
 
-}
+            padding:
+                8px 11px;
 
+            background: #21262d;
 
-button:disabled {
+            color: #e6edf3;
 
-    opacity: .5;
+            font-size: 13px;
 
-    cursor: not-allowed;
+            cursor: pointer;
 
-}
+            white-space: nowrap;
 
+        }
 
-/* WORKSPACE */
 
-#workspace {
+        button:hover {
 
-    display: flex;
+            background: #30363d;
 
-    flex: 1;
+        }
 
-    min-height: 0;
 
-}
+        button:active {
 
+            transform:
+                translateY(1px);
 
-/* SIDEBAR */
+        }
 
-#sidebar {
 
-    width: 230px;
+        button:disabled {
 
-    background: #161b22;
+            opacity: 0.5;
 
-    border-right:
-        1px solid #30363d;
+            cursor:
+                not-allowed;
 
-    display: flex;
+        }
 
-    flex-direction: column;
 
-}
+        .run-button {
 
+            background: #238636;
 
-.sidebar-head {
+            border-color:
+                #2ea043;
 
-    padding: 9px;
+        }
 
-    display: flex;
 
-    gap: 6px;
+        .run-button:hover {
 
-    border-bottom:
-        1px solid #30363d;
+            background: #2ea043;
 
-}
+        }
 
 
-#projectSelect {
+        /* =========================
+           MAIN WORKSPACE
+        ========================= */
 
-    flex: 1;
+        #workspace {
 
-    min-width: 0;
+            flex: 1;
 
-    background: #0d1117;
+            min-height: 0;
 
-    color: #e6edf3;
+            display: flex;
 
-    border:
-        1px solid #30363d;
+        }
 
-    border-radius: 5px;
 
-    padding: 7px;
+        /* =========================
+           SIDEBAR
+        ========================= */
 
-}
+        #sidebar {
 
+            width: 235px;
 
-#files {
+            min-width: 235px;
 
-    padding: 8px;
+            display: flex;
 
-    overflow-y: auto;
+            flex-direction: column;
 
-}
+            background: #161b22;
 
+            border-right:
+                1px solid #30363d;
 
-.file {
+        }
 
-    padding: 8px;
 
-    border-radius: 5px;
+        .sidebar-header {
 
-    cursor: pointer;
+            height: 46px;
 
-    white-space: nowrap;
+            display: flex;
 
-    overflow: hidden;
+            align-items: center;
 
-    text-overflow: ellipsis;
+            gap: 6px;
 
-    font-family: monospace;
+            padding:
+                7px;
 
-}
+            border-bottom:
+                1px solid #30363d;
 
+        }
 
-.file:hover {
 
-    background: #21262d;
+        #projectSelect {
 
-}
+            flex: 1;
 
+            min-width: 0;
 
-.file.active {
+            height: 31px;
 
-    background: #30363d;
+            padding:
+                0 7px;
 
-}
+            border:
+                1px solid #30363d;
 
+            border-radius: 5px;
 
-/* MAIN */
+            outline: none;
 
-#main {
+            background: #0d1117;
 
-    flex: 1;
+            color: #e6edf3;
 
-    min-width: 0;
+        }
 
-    display: flex;
 
-    flex-direction: column;
+        .small-button {
 
-}
+            width: 31px;
 
+            height: 31px;
 
-#filename {
+            padding: 0;
 
-    height: 38px;
+            font-size: 16px;
 
-    padding:
-        10px 12px;
+        }
 
-    background: #0d1117;
 
-    border-bottom:
-        1px solid #30363d;
+        .files-title {
 
-    font-family: monospace;
+            padding:
+                10px 10px 5px;
 
-}
+            color: #8b949e;
 
+            font-size: 11px;
 
-#editor {
+            font-weight: bold;
 
-    flex: 1;
+            letter-spacing: 0.5px;
 
-    width: 100%;
+        }
 
-    resize: none;
 
-    outline: none;
+        #files {
 
-    border: none;
+            flex: 1;
 
-    padding: 14px;
+            min-height: 0;
 
-    background: #0d1117;
+            padding:
+                4px 7px 10px;
 
-    color: #e6edf3;
+            overflow-y: auto;
 
-    font-family: monospace;
+        }
 
-    font-size: 15px;
 
-    line-height: 1.5;
+        .file {
 
-    tab-size: 4;
+            display: flex;
 
-}
+            align-items: center;
 
+            gap: 7px;
 
-/* TERMINAL */
+            width: 100%;
 
-#terminal {
+            padding:
+                8px 8px;
 
-    height: 190px;
+            border-radius: 5px;
 
-    flex-shrink: 0;
+            color: #c9d1d9;
 
-    display: flex;
+            font-family:
+                monospace;
 
-    flex-direction: column;
+            font-size: 13px;
 
-    background: #010409;
+            cursor: pointer;
 
-    border-top:
-        1px solid #30363d;
+            user-select: none;
 
-}
+        }
 
 
-.term-head {
+        .file:hover {
 
-    padding:
-        8px 12px;
+            background: #21262d;
 
-    border-bottom:
-        1px solid #21262d;
+        }
 
-    color: #8b949e;
 
-    font-size: 13px;
+        .file.active {
 
-}
+            background: #30363d;
 
+            color: white;
 
-#output {
+        }
 
-    flex: 1;
 
-    margin: 0;
+        .file-icon {
 
-    padding: 12px;
+            flex-shrink: 0;
 
-    overflow: auto;
+        }
 
-    white-space: pre-wrap;
 
-    font-family: monospace;
+        .file-name {
 
-}
+            overflow: hidden;
 
+            text-overflow: ellipsis;
 
-/* MOBILE */
+            white-space: nowrap;
 
-@media (max-width: 700px) {
+        }
 
-    #sidebar {
 
-        width: 155px;
+        .empty-files {
 
-    }
+            padding: 12px 9px;
 
-    header {
+            color: #8b949e;
 
-        gap: 5px;
+            font-size: 12px;
 
-    }
+        }
 
-    button {
 
-        padding:
-            7px 8px;
+        /* =========================
+           EDITOR AREA
+        ========================= */
 
-        font-size: 12px;
+        #main {
 
-    }
+            flex: 1;
 
-    #terminal {
+            min-width: 0;
 
-        height: 160px;
+            display: flex;
 
-    }
+            flex-direction: column;
 
-}
+        }
 
-</style>
+
+        #filebar {
+
+            height: 38px;
+
+            min-height: 38px;
+
+            display: flex;
+
+            align-items: center;
+
+            padding:
+                0 12px;
+
+            background: #0d1117;
+
+            border-bottom:
+                1px solid #30363d;
+
+        }
+
+
+        #filename {
+
+            font-family:
+                monospace;
+
+            font-size: 13px;
+
+            color: #c9d1d9;
+
+            overflow: hidden;
+
+            text-overflow: ellipsis;
+
+            white-space: nowrap;
+
+        }
+
+
+        #dirty {
+
+            margin-left: 7px;
+
+            color: #f0f6fc;
+
+            display: none;
+
+        }
+
+
+        #editor {
+
+            flex: 1;
+
+            width: 100%;
+
+            min-height: 0;
+
+            resize: none;
+
+            border: none;
+
+            outline: none;
+
+            padding:
+                15px;
+
+            background: #0d1117;
+
+            color: #e6edf3;
+
+            font-family:
+                "Courier New",
+                monospace;
+
+            font-size: 15px;
+
+            line-height: 1.55;
+
+            tab-size: 4;
+
+            white-space: pre;
+
+            overflow: auto;
+
+        }
+
+
+        #editor::placeholder {
+
+            color: #484f58;
+
+        }
+
+
+        /* =========================
+           TERMINAL
+        ========================= */
+
+        #terminal {
+
+            height: 190px;
+
+            min-height: 120px;
+
+            display: flex;
+
+            flex-direction: column;
+
+            background: #010409;
+
+            border-top:
+                1px solid #30363d;
+
+        }
+
+
+        .terminal-header {
+
+            height: 36px;
+
+            min-height: 36px;
+
+            display: flex;
+
+            align-items: center;
+
+            padding:
+                0 12px;
+
+            border-bottom:
+                1px solid #21262d;
+
+            color: #8b949e;
+
+            font-size: 12px;
+
+            font-weight: bold;
+
+        }
+
+
+        #output {
+
+            flex: 1;
+
+            min-height: 0;
+
+            margin: 0;
+
+            padding:
+                11px 12px;
+
+            overflow: auto;
+
+            white-space: pre-wrap;
+
+            word-break: break-word;
+
+            color: #e6edf3;
+
+            font-family:
+                "Courier New",
+                monospace;
+
+            font-size: 13px;
+
+            line-height: 1.5;
+
+        }
+
+
+        /* =========================
+           MOBILE
+        ========================= */
+
+        @media (max-width: 700px) {
+
+            header {
+
+                padding:
+                    0 7px;
+
+                gap: 4px;
+
+            }
+
+
+            .logo {
+
+                font-size: 14px;
+
+            }
+
+
+            .logo-icon {
+
+                font-size: 18px;
+
+            }
+
+
+            button {
+
+                padding:
+                    7px 8px;
+
+                font-size: 11px;
+
+            }
+
+
+            #sidebar {
+
+                width: 155px;
+
+                min-width: 155px;
+
+            }
+
+
+            #terminal {
+
+                height: 165px;
+
+            }
+
+
+            #editor {
+
+                font-size: 14px;
+
+            }
+
+        }
+
+
+        @media (max-width: 480px) {
+
+            .logo-text {
+
+                display: none;
+
+            }
+
+
+            #sidebar {
+
+                width: 140px;
+
+                min-width: 140px;
+
+            }
+
+
+            button {
+
+                font-size: 10px;
+
+                padding:
+                    7px 6px;
+
+            }
+
+        }
+
+    </style>
 
 </head>
 
@@ -383,91 +660,190 @@ button:disabled {
 <body>
 
 
+<!-- =========================
+     HEADER
+========================= -->
+
 <header>
 
-    <div class="title">
-        🐍 Python IDE
+
+    <div class="logo">
+
+        <span class="logo-icon">
+            🐍
+        </span>
+
+        <span class="logo-text">
+            Python IDE
+        </span>
+
     </div>
 
-    <button onclick="newProject()">
+
+    <button
+        onclick="newProject()"
+        title="Create a new project"
+    >
         ＋ Project
     </button>
 
-    <button onclick="newFile()">
+
+    <button
+        onclick="newFile()"
+        title="Create a new file"
+    >
         ＋ File
     </button>
 
-    <button onclick="saveFile()">
+
+    <button
+        onclick="saveFile()"
+        title="Save current file"
+    >
         💾 Save
     </button>
 
+
     <button
-        class="run"
         id="runButton"
+        class="run-button"
         onclick="runCurrent()"
+        title="Run current Python file"
     >
         ▶ Run
     </button>
 
+
 </header>
 
+
+
+<!-- =========================
+     WORKSPACE
+========================= -->
 
 <div id="workspace">
 
 
-<aside id="sidebar">
+    <!-- =====================
+         SIDEBAR
+    ====================== -->
+
+    <aside id="sidebar">
 
 
-<div class="sidebar-head">
+        <div class="sidebar-header">
 
-<select
-    id="projectSelect"
-    onchange="switchProject()"
-></select>
+
+            <select
+                id="projectSelect"
+                onchange="switchProject()"
+            >
+            </select>
+
+
+            <button
+                class="small-button"
+                onclick="newProject()"
+                title="New project"
+            >
+                ＋
+            </button>
+
+
+        </div>
+
+
+        <div class="files-title">
+
+            PROJECT FILES
+
+        </div>
+
+
+        <div id="files">
+
+            <div class="empty-files">
+                Loading...
+            </div>
+
+        </div>
+
+
+    </aside>
+
+
+
+    <!-- =====================
+         MAIN
+    ====================== -->
+
+    <main id="main">
+
+
+        <div id="filebar">
+
+
+            <span id="filename">
+
+                No file selected
+
+            </span>
+
+
+            <span id="dirty">
+                ●
+            </span>
+
+
+        </div>
+
+
+
+        <textarea
+            id="editor"
+            spellcheck="false"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            placeholder="Select a file..."
+        ></textarea>
+
+
+
+        <!-- =================
+             TERMINAL
+        ================== -->
+
+        <section id="terminal">
+
+
+            <div class="terminal-header">
+
+                TERMINAL / OUTPUT
+
+            </div>
+
+
+            <pre id="output">Ready.</pre>
+
+
+        </section>
+
+
+    </main>
+
 
 </div>
 
-
-<div id="files"></div>
-
-
-</aside>
-
-
-<main id="main">
-
-
-<div id="filename">
-    No file selected
-</div>
-
-
-<textarea
-    id="editor"
-    spellcheck="false"
-    placeholder="Select a file..."
-></textarea>
-
-
-<div id="terminal">
-
-<div class="term-head">
-    TERMINAL / OUTPUT
-</div>
-
-<pre id="output">
-Ready.
-</pre>
-
-</div>
-
-
-</main>
-
-</div>
 
 
 <script>
+
+
+/* =====================================================
+   STATE
+===================================================== */
 
 
 let currentProject = null;
@@ -475,11 +851,47 @@ let currentProject = null;
 let currentFile = null;
 
 
+
 const editor =
-    document.getElementById("editor");
+    document.getElementById(
+        "editor"
+    );
+
 
 const output =
-    document.getElementById("output");
+    document.getElementById(
+        "output"
+    );
+
+
+const projectSelect =
+    document.getElementById(
+        "projectSelect"
+    );
+
+
+const filename =
+    document.getElementById(
+        "filename"
+    );
+
+
+const dirtyIndicator =
+    document.getElementById(
+        "dirty"
+    );
+
+
+const runButton =
+    document.getElementById(
+        "runButton"
+    );
+
+
+
+/* =====================================================
+   API HELPER
+===================================================== */
 
 
 async function api(
@@ -487,112 +899,163 @@ async function api(
     options = {}
 ) {
 
+
     const response =
         await fetch(
             url,
             options
         );
 
-    const data =
-        await response.json();
+
+    let data;
+
+
+    try {
+
+        data =
+            await response.json();
+
+    }
+
+    catch {
+
+        throw new Error(
+            "Server returned invalid data."
+        );
+
+    }
+
 
     if (!response.ok) {
 
         throw new Error(
             data.error ||
-            "Request failed"
+            "Request failed."
         );
 
     }
 
+
     return data;
+
 }
 
 
-/* PROJECTS */
+
+/* =====================================================
+   LOAD PROJECTS
+===================================================== */
+
 
 async function loadProjects() {
 
-    const data =
-        await api(
-            "/api/projects"
-        );
 
-    const select =
-        document.getElementById(
-            "projectSelect"
-        );
-
-    select.innerHTML = "";
+    try {
 
 
-    for (
-        const project
-        of data.projects
-    ) {
-
-        const option =
-            document.createElement(
-                "option"
+        const data =
+            await api(
+                "/api/projects"
             );
 
-        option.value =
-            project.id;
 
-        option.textContent =
-            project.name;
+        projectSelect.innerHTML =
+            "";
 
-        select.appendChild(
-            option
-        );
+
+        for (
+            const project
+            of data.projects
+        ) {
+
+
+            const option =
+                document.createElement(
+                    "option"
+                );
+
+
+            option.value =
+                project.id;
+
+
+            option.textContent =
+                project.name;
+
+
+            projectSelect.appendChild(
+                option
+            );
+
+        }
+
+
+
+        /*
+         * If there are no projects,
+         * automatically create one.
+         */
+
+        if (
+            data.projects.length === 0
+        ) {
+
+
+            await createDefaultProject();
+
+
+            return;
+
+        }
+
+
+
+        /*
+         * Select first project.
+         */
+
+        currentProject =
+            data.projects[0].id;
+
+
+        projectSelect.value =
+            currentProject;
+
+
+        currentFile = null;
+
+
+        await loadFiles();
+
 
     }
 
+    catch (error) {
 
-    if (
-        data.projects.length === 0
-    ) {
 
-        await newProject(true);
-
-        return;
+        output.textContent =
+            "Startup error:\n" +
+            error.message;
 
     }
-
-
-    currentProject =
-        data.projects[0].id;
-
-    select.value =
-        currentProject;
-
-    await loadFiles();
 
 }
 
 
-async function newProject(
-    silent = false
-) {
 
-    const name =
-        prompt(
-            "Project name:",
-            "my-project"
-        );
+/* =====================================================
+   DEFAULT PROJECT
+===================================================== */
 
 
-    if (name === null) {
-
-        return;
-
-    }
+async function createDefaultProject() {
 
 
     const data =
         await api(
             "/api/projects",
             {
+
                 method: "POST",
 
                 headers: {
@@ -602,135 +1065,180 @@ async function newProject(
 
                 body:
                     JSON.stringify({
-                        name: name
+
+                        name:
+                            "my-project"
+
                     })
+
             }
         );
 
 
-    await loadProjects();
-
-
-    document.getElementById(
-        "projectSelect"
-    ).value =
-        data.id;
-
-
     currentProject =
         data.id;
 
 
+    projectSelect.innerHTML =
+        "";
+
+
+    const option =
+        document.createElement(
+            "option"
+        );
+
+
+    option.value =
+        data.id;
+
+
+    option.textContent =
+        data.name;
+
+
+    projectSelect.appendChild(
+        option
+    );
+
+
     await loadFiles();
 
+}
 
-    if (!silent) {
+
+
+/* =====================================================
+   NEW PROJECT
+===================================================== */
+
+
+async function newProject() {
+
+
+    const name =
+        prompt(
+            "Project name:",
+            "my-project"
+        );
+
+
+    if (
+        name === null
+    ) {
+
+        return;
+
+    }
+
+
+    const trimmed =
+        name.trim();
+
+
+    if (!trimmed) {
+
+        alert(
+            "Project name cannot be empty."
+        );
+
+        return;
+
+    }
+
+
+    try {
+
+
+        const data =
+            await api(
+                "/api/projects",
+                {
+
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+
+                            name:
+                                trimmed
+
+                        })
+
+                }
+            );
+
+
+        currentProject =
+            data.id;
+
+
+        currentFile =
+            null;
+
+
+        await loadProjects();
+
+
+        projectSelect.value =
+            data.id;
+
+
+        currentProject =
+            data.id;
+
+
+        await loadFiles();
+
 
         output.textContent =
-            "Created project: " +
+            "Created project:\n" +
             data.id;
+
+
+    }
+
+    catch (error) {
+
+
+        alert(
+            "Could not create project:\n" +
+            error.message
+        );
 
     }
 
 }
+
+
+
+/* =====================================================
+   SWITCH PROJECT
+===================================================== */
 
 
 async function switchProject() {
 
-    currentProject =
-        document.getElementById(
-            "projectSelect"
-        ).value;
+
+    const selected =
+        projectSelect.value;
 
 
-    currentFile = null;
+    if (!selected) {
 
-    await loadFiles();
-
-}
-
-
-/* FILES */
-
-async function loadFiles() {
-
-    const data =
-        await api(
-            `/api/projects/${encodeURIComponent(
-                currentProject
-            )}/files`
-        );
-
-
-    const container =
-        document.getElementById(
-            "files"
-        );
-
-
-    container.innerHTML = "";
-
-
-    for (
-        const path
-        of data.files
-    ) {
-
-        const div =
-            document.createElement(
-                "div"
-            );
-
-
-        div.className =
-            "file";
-
-
-        div.textContent =
-            "📄 " + path;
-
-
-        div.title =
-            path;
-
-
-        div.onclick =
-            () => openFile(path);
-
-
-        if (
-            path === currentFile
-        ) {
-
-            div.classList.add(
-                "active"
-            );
-
-        }
-
-
-        container.appendChild(
-            div
-        );
+        return;
 
     }
 
 
-    if (
-        !currentFile &&
-        data.files.length
-    ) {
-
-        await openFile(
-            data.files[0]
-        );
-
-    }
-
-}
-
-
-async function openFile(path) {
+    /*
+     * Warn about unsaved changes.
+     */
 
     if (
         currentFile &&
@@ -738,47 +1246,55 @@ async function openFile(path) {
         editor.dataset.saved
     ) {
 
+
         const save =
             confirm(
-                "You have unsaved changes. Save them?"
+                "You have unsaved changes.\n\n" +
+                "Save them before switching?"
             );
 
 
         if (save) {
 
-            await saveFile();
+            try {
+
+                await saveFile();
+
+            }
+
+            catch (error) {
+
+                return;
+
+            }
 
         }
 
     }
 
 
-    const data =
-        await api(
-            `/api/projects/${encodeURIComponent(
-                currentProject
-            )}/file?path=${encodeURIComponent(
-                path
-            )}`
-        );
+    currentProject =
+        selected;
 
 
     currentFile =
-        path;
+        null;
 
 
     editor.value =
-        data.content;
+        "";
 
 
     editor.dataset.saved =
-        data.content;
+        "";
 
 
-    document.getElementById(
-        "filename"
-    ).textContent =
-        path;
+    filename.textContent =
+        "No file selected";
+
+
+    dirtyIndicator.style.display =
+        "none";
 
 
     await loadFiles();
@@ -786,10 +1302,294 @@ async function openFile(path) {
 }
 
 
-async function saveFile() {
+
+/* =====================================================
+   LOAD FILES
+===================================================== */
+
+
+async function loadFiles() {
+
+
+    if (!currentProject) {
+
+        return;
+
+    }
+
+
+    try {
+
+
+        const data =
+            await api(
+                `/api/projects/${encodeURIComponent(
+                    currentProject
+                )}/files`
+            );
+
+
+        const container =
+            document.getElementById(
+                "files"
+            );
+
+
+        container.innerHTML =
+            "";
+
+
+        if (
+            data.files.length === 0
+        ) {
+
+
+            container.innerHTML =
+                `
+                <div class="empty-files">
+                    No files.
+                </div>
+                `;
+
+
+            return;
+
+        }
+
+
+
+        for (
+            const path
+            of data.files
+        ) {
+
+
+            const item =
+                document.createElement(
+                    "div"
+                );
+
+
+            item.className =
+                "file";
+
+
+            if (
+                path === currentFile
+            ) {
+
+                item.classList.add(
+                    "active"
+                );
+
+            }
+
+
+            const icon =
+                document.createElement(
+                    "span"
+                );
+
+
+            icon.className =
+                "file-icon";
+
+
+            icon.textContent =
+                path.endsWith(".py")
+                    ? "🐍"
+                    : "📄";
+
+
+            const name =
+                document.createElement(
+                    "span"
+                );
+
+
+            name.className =
+                "file-name";
+
+
+            name.textContent =
+                path;
+
+
+            item.appendChild(
+                icon
+            );
+
+
+            item.appendChild(
+                name
+            );
+
+
+            item.title =
+                path;
+
+
+            item.onclick =
+                () => openFile(path);
+
+
+            container.appendChild(
+                item
+            );
+
+        }
+
+
+
+        /*
+         * Open first file
+         * automatically.
+         */
+
+        if (
+            !currentFile &&
+            data.files.length > 0
+        ) {
+
+
+            await openFile(
+                data.files[0]
+            );
+
+        }
+
+
+    }
+
+    catch (error) {
+
+
+        output.textContent =
+            "Could not load files:\n" +
+            error.message;
+
+    }
+
+}
+
+
+
+/* =====================================================
+   OPEN FILE
+===================================================== */
+
+
+async function openFile(
+    path
+) {
+
+
+    /*
+     * Detect unsaved changes.
+     */
 
     if (
-        !currentProject ||
+        currentFile &&
+        editor.value !==
+        editor.dataset.saved
+    ) {
+
+
+        const save =
+            confirm(
+                "You have unsaved changes.\n\n" +
+                "Save them?"
+            );
+
+
+        if (save) {
+
+            try {
+
+                await saveFile();
+
+            }
+
+            catch (error) {
+
+                return;
+
+            }
+
+        }
+
+    }
+
+
+    try {
+
+
+        const data =
+            await api(
+                `/api/projects/${encodeURIComponent(
+                    currentProject
+                )}/file?path=${encodeURIComponent(
+                    path
+                )}`
+            );
+
+
+        currentFile =
+            path;
+
+
+        editor.value =
+            data.content;
+
+
+        editor.dataset.saved =
+            data.content;
+
+
+        filename.textContent =
+            path;
+
+
+        dirtyIndicator.style.display =
+            "none";
+
+
+        await loadFiles();
+
+
+    }
+
+    catch (error) {
+
+
+        output.textContent =
+            "Could not open file:\n" +
+            error.message;
+
+    }
+
+}
+
+
+
+/* =====================================================
+   SAVE FILE
+===================================================== */
+
+
+async function saveFile() {
+
+
+    if (
+        !currentProject
+    ) {
+
+        return;
+
+    }
+
+
+    if (
         !currentFile
     ) {
 
@@ -798,50 +1598,86 @@ async function saveFile() {
     }
 
 
-    await api(
-        `/api/projects/${encodeURIComponent(
-            currentProject
-        )}/file`,
-        {
-
-            method: "POST",
-
-            headers: {
-                "Content-Type":
-                    "application/json"
-            },
-
-            body:
-                JSON.stringify({
-
-                    path:
-                        currentFile,
-
-                    content:
-                        editor.value
-
-                })
-
-        }
-    );
+    try {
 
 
-    editor.dataset.saved =
-        editor.value;
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/file`,
+            {
+
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+
+                        path:
+                            currentFile,
+
+                        content:
+                            editor.value
+
+                    })
+
+            }
+        );
 
 
-    output.textContent =
-        "Saved: " + currentFile;
+        editor.dataset.saved =
+            editor.value;
 
 
-    await loadFiles();
+        dirtyIndicator.style.display =
+            "none";
+
+
+        output.textContent =
+            "Saved:\n" +
+            currentFile;
+
+
+        await loadFiles();
+
+
+    }
+
+    catch (error) {
+
+
+        output.textContent =
+            "Save failed:\n" +
+            error.message;
+
+
+        throw error;
+
+    }
 
 }
 
 
+
+/* =====================================================
+   NEW FILE
+===================================================== */
+
+
 async function newFile() {
 
+
     if (!currentProject) {
+
+
+        alert(
+            "Create a project first."
+        );
+
 
         return;
 
@@ -856,8 +1692,7 @@ async function newFile() {
 
 
     if (
-        path === null ||
-        !path.trim()
+        path === null
     ) {
 
         return;
@@ -869,102 +1704,192 @@ async function newFile() {
         path.trim();
 
 
-    await api(
-        `/api/projects/${encodeURIComponent(
-            currentProject
-        )}/file`,
-        {
-
-            method: "POST",
-
-            headers: {
-                "Content-Type":
-                    "application/json"
-            },
-
-            body:
-                JSON.stringify({
-
-                    path:
-                        cleanPath,
-
-                    content:
-                        ""
-
-                })
-
-        }
-    );
-
-
-    await loadFiles();
-
-    await openFile(
-        cleanPath
-    );
-
-}
-
-
-/* RUN */
-
-async function runCurrent() {
-
-    if (!currentFile) {
-
-        output.textContent =
-            "Select a file first.";
+    if (!cleanPath) {
 
         return;
 
     }
 
+
+    try {
+
+
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/file`,
+            {
+
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+
+                        path:
+                            cleanPath,
+
+                        content:
+                            ""
+
+                    })
+
+            }
+        );
+
+
+        await loadFiles();
+
+
+        await openFile(
+            cleanPath
+        );
+
+
+        output.textContent =
+            "Created:\n" +
+            cleanPath;
+
+
+    }
+
+    catch (error) {
+
+
+        alert(
+            "Could not create file:\n" +
+            error.message
+        );
+
+    }
+
+}
+
+
+
+/* =====================================================
+   RUN PROJECT
+===================================================== */
+
+
+async function runCurrent() {
+
+
+    if (
+        !currentProject
+    ) {
+
+
+        output.textContent =
+            "No project selected.";
+
+
+        return;
+
+    }
+
+
+    if (
+        !currentFile
+    ) {
+
+
+        output.textContent =
+            "Select a Python file first.";
+
+
+        return;
+
+    }
+
+
+    if (
+        !currentFile.endsWith(".py")
+    ) {
+
+
+        output.textContent =
+            "Only Python files can be run.";
+
+
+        return;
+
+    }
+
+
+
+    /*
+     * Save before running.
+     */
 
     if (
         editor.value !==
         editor.dataset.saved
     ) {
 
-        await saveFile();
+
+        try {
+
+            await saveFile();
+
+        }
+
+        catch {
+
+            return;
+
+        }
 
     }
 
 
-    if (
-        !currentFile.endsWith(
-            ".py"
-        )
-    ) {
 
-        output.textContent =
-            "Only .py files can be run.";
-
-        return;
-
-    }
+    runButton.disabled =
+        true;
 
 
-    const button =
-        document.getElementById(
-            "runButton"
-        );
-
-
-    button.disabled = true;
-
-    button.textContent =
+    runButton.textContent =
         "Running...";
 
 
     output.textContent =
-        "Running...";
+        "Running project...\n\n" +
+        "Entry file: " +
+        currentFile;
+
 
 
     try {
 
+
+        /*
+         * IMPORTANT:
+         *
+         * We now call:
+         *
+         * /api/projects/{project}/run
+         *
+         * instead of the old /run endpoint.
+         *
+         * The backend copies the entire
+         * project into a temporary directory.
+         *
+         * Therefore imports such as:
+         *
+         * from utils import add
+         *
+         * work correctly.
+         */
+
         const data =
             await api(
-                "/run",
+                `/api/projects/${encodeURIComponent(
+                    currentProject
+                )}/run`,
                 {
 
                     method: "POST",
@@ -976,33 +1901,54 @@ async function runCurrent() {
 
                     body:
                         JSON.stringify({
-                            code:
-                                editor.value
+
+                            entry:
+                                currentFile
+
                         })
 
                 }
             );
 
 
-        let text = "";
+
+        let text =
+            "";
 
 
-        if (data.stdout) {
+        /*
+         * Standard output.
+         */
 
-            text += data.stdout;
+        if (
+            data.stdout
+        ) {
+
+            text +=
+                data.stdout;
 
         }
 
 
-        if (data.stderr) {
+        /*
+         * Errors / stderr.
+         */
+
+        if (
+            data.stderr
+        ) {
+
 
             if (text) {
 
-                text += "\n";
+                text +=
+                    "\n";
 
             }
 
-            text += data.stderr;
+
+            text +=
+                data.stderr;
 
         }
 
@@ -1015,23 +1961,40 @@ async function runCurrent() {
         }
 
 
+        /*
+         * Add exit status.
+         */
+
+        text +=
+            "\n\n--- Process exited with code " +
+            data.returncode +
+            " ---";
+
+
         output.textContent =
             text;
 
 
-    } catch (error) {
+    }
+
+    catch (error) {
+
 
         output.textContent =
-            "Error: " +
+            "Run failed:\n\n" +
             error.message;
 
+    }
 
-    } finally {
 
-        button.disabled =
+    finally {
+
+
+        runButton.disabled =
             false;
 
-        button.textContent =
+
+        runButton.textContent =
             "▶ Run";
 
     }
@@ -1039,21 +2002,59 @@ async function runCurrent() {
 }
 
 
-/* EDITOR SHORTCUTS */
+
+/* =====================================================
+   EDITOR
+===================================================== */
+
+
+editor.addEventListener(
+    "input",
+    function() {
+
+
+        if (
+            editor.value !==
+            editor.dataset.saved
+        ) {
+
+            dirtyIndicator.style.display =
+                "inline";
+
+        }
+
+        else {
+
+            dirtyIndicator.style.display =
+                "none";
+
+        }
+
+    }
+);
+
+
+
+/*
+ * TAB support.
+ */
 
 editor.addEventListener(
     "keydown",
     function(event) {
 
+
         if (
             event.key === "Tab"
         ) {
+
 
             event.preventDefault();
 
 
             const start =
                 editor.selectionStart;
+
 
             const end =
                 editor.selectionEnd;
@@ -1073,22 +2074,46 @@ editor.addEventListener(
 
 
             editor.selectionStart =
-                editor.selectionEnd =
-                    start + 4;
+                start + 4;
+
+
+            editor.selectionEnd =
+                start + 4;
+
+
+            editor.dispatchEvent(
+                new Event("input")
+            );
 
         }
+
+    }
+);
+
+
+
+/*
+ * Ctrl+S / Cmd+S
+ */
+
+document.addEventListener(
+    "keydown",
+    async function(event) {
 
 
         if (
             (event.ctrlKey ||
-             event.metaKey) &&
+             event.metaKey)
+            &&
             event.key.toLowerCase()
                 === "s"
         ) {
 
+
             event.preventDefault();
 
-            saveFile();
+
+            await saveFile();
 
         }
 
@@ -1096,19 +2121,46 @@ editor.addEventListener(
 );
 
 
-/* START */
 
-loadProjects().catch(
-    error => {
+/*
+ * Ctrl+Enter / Cmd+Enter
+ * runs the current file.
+ */
 
-        output.textContent =
-            "Startup error: " +
-            error.message;
+document.addEventListener(
+    "keydown",
+    function(event) {
+
+
+        if (
+            (event.ctrlKey ||
+             event.metaKey)
+            &&
+            event.key === "Enter"
+        ) {
+
+
+            event.preventDefault();
+
+
+            runCurrent();
+
+        }
 
     }
 );
 
+
+
+/* =====================================================
+   START APPLICATION
+===================================================== */
+
+
+loadProjects();
+
 </script>
+
 
 </body>
 
