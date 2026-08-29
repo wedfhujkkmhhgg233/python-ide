@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: python-ide
+    runtime: docker
+    plan: free
+    autoDeploy: true
