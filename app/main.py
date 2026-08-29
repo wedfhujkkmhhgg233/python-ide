@@ -1015,6 +1015,54 @@ async def project_terminal(
     os.set_blocking(fd, False)
 
     loop = asyncio.get_running_loop()
+
+    # An optional "run this once the shell is ready" command,
+    # e.g. `?cmd=python3+-u+%27main.py%27`. Typing it from the
+    # *server* side, timed off the shell's own first output,
+    # avoids a real race: writing into a pty before the shell
+    # has finished starting up can intermittently swallow or
+    # garble the first thing typed into it.
+    initial_command = websocket.query_params.get("cmd")
+    pending_output = b""
+
+    if initial_command:
+
+        deadline = loop.time() + 3.0
+
+        while loop.time() < deadline:
+
+            await asyncio.sleep(0.02)
+
+            try:
+                chunk = os.read(fd, 65536)
+
+            except (BlockingIOError, OSError):
+                chunk = b""
+
+            if chunk:
+                pending_output += chunk
+                break
+
+        try:
+            os.write(
+                fd,
+                (initial_command + "\r").encode(
+                    "utf-8",
+                    errors="ignore"
+                )
+            )
+
+        except OSError:
+            pass
+
+    if pending_output:
+
+        try:
+            await websocket.send_bytes(pending_output)
+
+        except Exception:
+            pass
+
     output_queue = asyncio.Queue()
 
     def _on_readable():
