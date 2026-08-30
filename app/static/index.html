@@ -48,6 +48,12 @@
     <script
         src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"
     ></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"
+    ></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@xterm/addon-canvas@0.7.0/lib/addon-canvas.min.js"
+    ></script>
     <style>
         * {
             box-sizing: border-box;
@@ -568,6 +574,11 @@
         #xtermContainer .xterm {
             height: 100%;
         }
+        #xtermContainer .xterm-viewport {
+            /* let the browser's compositor handle scrolling
+               instead of routing every touch through JS */
+            touch-action: pan-y;
+        }
         /* =========================
            MOBILE
         ========================= */
@@ -1016,6 +1027,32 @@ function setTermStatus(status, title) {
     termStatusDot.title =
         title || status;
 }
+function loadTerminalRenderer(termInstance) {
+    try {
+        const webgl = new WebglAddon.WebglAddon();
+        webgl.onContextLoss(() => {
+            /*
+             * Mobile browsers can yank the WebGL context
+             * (e.g. tab backgrounded, too many contexts
+             * open elsewhere). Drop back to Canvas instead
+             * of silently reverting to the slow DOM renderer.
+             */
+            webgl.dispose();
+            try {
+                termInstance.loadAddon(
+                    new CanvasAddon.CanvasAddon()
+                );
+            } catch {}
+        });
+        termInstance.loadAddon(webgl);
+    } catch {
+        try {
+            termInstance.loadAddon(
+                new CanvasAddon.CanvasAddon()
+            );
+        } catch {}
+    }
+}
 function ensureTerminalWidget() {
     if (term) {
         return;
@@ -1037,6 +1074,17 @@ function ensureTerminalWidget() {
     term.open(
         document.getElementById("xtermContainer")
     );
+    /*
+     * Without a GPU-backed renderer, xterm falls back to
+     * painting every glyph as a real DOM node - fine for
+     * typing, but scrolling repaints the whole viewport on
+     * every pixel of movement, which is what makes mobile
+     * scrolling feel heavy/laggy. WebGL fixes that; Canvas
+     * is the fallback for browsers/contexts without WebGL
+     * (some mobile browsers refuse WebGL in background tabs
+     * or after too many contexts are open).
+     */
+    loadTerminalRenderer(term);
     term.onData((data) => {
         if (
             termSocket &&
