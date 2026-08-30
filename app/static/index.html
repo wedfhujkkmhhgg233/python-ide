@@ -578,6 +578,12 @@
             /* let the browser's compositor handle scrolling
                instead of routing every touch through JS */
             touch-action: pan-y;
+            /* without this, touch-drag scrolls the viewport
+               only exactly as far as the finger physically
+               moves and stops dead on lift - no momentum/
+               fling. This restores native inertial scroll. */
+            -webkit-overflow-scrolling: touch;
+            overflow-y: scroll !important;
         }
         /* =========================
            MOBILE
