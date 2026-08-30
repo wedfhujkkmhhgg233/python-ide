@@ -2922,11 +2922,15 @@ async function startCamera() {
 function startCameraCaptureLoop() {
     const ctx = cameraCaptureCanvas.getContext("2d");
     /*
-     * Capped resolution + a modest ~10fps interval keeps
-     * bandwidth and server CPU (OpenCV runs per frame, in
-     * a worker thread) reasonable on a phone connection.
+     * Smaller frames + a tighter interval: the previous
+     * 480px/quality-0.7/100ms settings were mostly limited
+     * by round-trip time (network + decode/process/encode),
+     * not by this interval - so a smaller, cheaper frame
+     * moves more of them through per second. The interval
+     * itself is now just an upper ceiling (~20fps); actual
+     * throughput is governed by the in-flight cap below.
      */
-    const MAX_W = 480;
+    const MAX_W = 360;
     clearInterval(cameraCaptureTimer);
     cameraCaptureTimer = setInterval(() => {
         if (
@@ -2945,9 +2949,11 @@ function startCameraCaptureLoop() {
          * Basic backpressure: if the server hasn't finished
          * processing recent frames yet, skip capturing a new
          * one rather than piling up a backlog and falling
-         * further and further behind real time.
+         * further and further behind real time. Raised from
+         * 2 to 3 to give a little more pipelining headroom
+         * on higher-latency mobile connections.
          */
-        if (cameraFramesInFlight >= 2) {
+        if (cameraFramesInFlight >= 3) {
             return;
         }
         const scale = Math.min(1, MAX_W / vw);
@@ -2969,9 +2975,9 @@ function startCameraCaptureLoop() {
                 }
             },
             "image/jpeg",
-            0.7
+            0.6
         );
-    }, 100);
+    }, 50);
 }
 function stopCamera(statusTitle) {
     cameraRunning = false;
