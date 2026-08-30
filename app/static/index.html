@@ -550,6 +550,9 @@
         .term-pane.active {
             display: flex;
         }
+        #xtermPane {
+            position: relative;
+        }
         #output {
             flex: 1;
             min-height: 0;
@@ -584,6 +587,26 @@
                fling. This restores native inertial scroll. */
             -webkit-overflow-scrolling: touch;
             overflow-y: scroll !important;
+        }
+        #termToast {
+            position: absolute;
+            left: 50%;
+            bottom: 14px;
+            transform: translateX(-50%) translateY(6px);
+            background: #1f6feb;
+            color: #fff;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 6px 12px;
+            border-radius: 6px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease, transform 0.15s ease;
+            z-index: 20;
+        }
+        #termToast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
         }
         /* =========================
            MOBILE
@@ -832,6 +855,13 @@
                     ></span>
                     <button
                         class="term-tool-btn"
+                        onclick="copyTerminalOutput()"
+                        title="Copy selection (or all output if nothing selected)"
+                    >
+                        📋 Copy
+                    </button>
+                    <button
+                        class="term-tool-btn"
                         onclick="restartTerminal()"
                         title="Start a fresh shell"
                     >
@@ -857,6 +887,7 @@
                 class="term-pane"
             >
                 <div id="xtermContainer"></div>
+                <div id="termToast"></div>
             </div>
         </section>
     </main>
@@ -1026,6 +1057,265 @@ let fitAddon = null;
 let termSocket = null;
 let termConnectedProject = null;
 let termConnecting = false;
+/* =====================================================
+   OUTPUT COLOR HIGHLIGHTING
+   The shell's raw bytes are decoded to text and scanned
+   line-by-line for error/warning/success patterns, then
+   re-encoded with ANSI color codes before xterm renders
+   them - same idea as what VS Code/PyCharm do to their
+   run/debug console output.
+===================================================== */
+const TERM_ANSI = {
+    reset: "\x1b[0m",
+    red: "\x1b[38;5;203m",
+    yellow: "\x1b[38;5;221m",
+    green: "\x1b[38;5;114m",
+    cyan: "\x1b[38;5;80m",
+    dim: "\x1b[2m",
+    bold: "\x1b[1m"
+};
+function termColor(str, color, bold) {
+    if (str === undefined || str === "") {
+        return "";
+    }
+    return (
+        (bold ? TERM_ANSI.bold : "") +
+        color +
+        str +
+        TERM_ANSI.reset
+    );
+}
+function highlightTermLine(line) {
+    if (!line) {
+        return line;
+    }
+    if (
+        /^Traceback \(most recent call last\):/.test(line)
+    ) {
+        return termColor(line, TERM_ANSI.red, true);
+    }
+    let m = line.match(
+        /^(\s*File ")([^"]+)(", line )(\d+)(, in .*)?$/
+    );
+    if (m) {
+        return (
+            m[1] +
+            termColor(m[2], TERM_ANSI.cyan) +
+            m[3] +
+            termColor(m[4], TERM_ANSI.yellow) +
+            (m[5] ? termColor(m[5], TERM_ANSI.dim) : "")
+        );
+    }
+    m = line.match(
+        /^([A-Za-z_][\w.]*(Error|Exception|Warning))(:?\s?)(.*)$/
+    );
+    if (m) {
+        return (
+            termColor(m[1], TERM_ANSI.red, true) +
+            m[3] +
+            termColor(m[4], TERM_ANSI.yellow)
+        );
+    }
+    if (/^(WARNING|Warning)\b[:\s]/.test(line)) {
+        return termColor(line, TERM_ANSI.yellow);
+    }
+    if (
+        /^(Successfully installed|Successfully built|Process exited with code 0\b)/.test(
+            line
+        )
+    ) {
+        return termColor(line, TERM_ANSI.green);
+    }
+    if (/^Process exited with code [1-9]/.test(line)) {
+        return termColor(line, TERM_ANSI.red, true);
+    }
+    return line;
+}
+const termTextDecoder = new TextDecoder("utf-8");
+let termLineBuffer = "";
+let termFlushTimer = null;
+function flushTermLineBuffer() {
+    clearTimeout(termFlushTimer);
+    termFlushTimer = null;
+    if (termLineBuffer) {
+        term.write(highlightTermLine(termLineBuffer));
+        termLineBuffer = "";
+    }
+}
+function feedTermData(chunkStr) {
+    termLineBuffer += chunkStr;
+    const lines = termLineBuffer.split("\n");
+    /*
+     * The last element is whatever comes after the final
+     * \n in this chunk - i.e. an incomplete line (or "" if
+     * the chunk ended cleanly on a newline). Hold it back
+     * so a prompt like "Enter name: " isn't chopped mid-
+     * word by highlighting, but flush it shortly after so
+     * it still appears effectively instantly.
+     */
+    termLineBuffer = lines.pop();
+    if (lines.length) {
+        term.write(
+            lines.map(highlightTermLine).join("\r\n") +
+                "\r\n"
+        );
+    }
+    clearTimeout(termFlushTimer);
+    if (termLineBuffer) {
+        termFlushTimer = setTimeout(
+            flushTermLineBuffer,
+            40
+        );
+    }
+}
+/* =====================================================
+   COPY SUPPORT
+   Desktop: drag-select (built into xterm) then hit Copy,
+   or Ctrl/Cmd+Shift+C. Mobile: long-press a line to copy
+   just that line, since touch text-selection isn't
+   reliably supported by xterm's own selection model.
+===================================================== */
+function copyTextToClipboard(text) {
+    if (!text) {
+        return Promise.resolve(false);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard
+            .writeText(text)
+            .then(() => true)
+            .catch(() => legacyCopyFallback(text));
+    }
+    return Promise.resolve(legacyCopyFallback(text));
+}
+function legacyCopyFallback(text) {
+    try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+    } catch {
+        return false;
+    }
+}
+let termToastTimer = null;
+function showTermToast(msg) {
+    const el = document.getElementById("termToast");
+    if (!el) {
+        return;
+    }
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(termToastTimer);
+    termToastTimer = setTimeout(() => {
+        el.classList.remove("show");
+    }, 1100);
+}
+function copyTerminalOutput() {
+    if (!term) {
+        return;
+    }
+    let text;
+    let label;
+    if (term.hasSelection()) {
+        text = term.getSelection();
+        label = "Selection copied";
+    } else {
+        const buf = term.buffer.active;
+        const rows = [];
+        for (let i = 0; i < buf.length; i++) {
+            const line = buf.getLine(i);
+            if (line) {
+                rows.push(line.translateToString(true));
+            }
+        }
+        while (rows.length && rows[rows.length - 1] === "") {
+            rows.pop();
+        }
+        text = rows.join("\n");
+        label = "All output copied";
+    }
+    copyTextToClipboard(text).then((ok) => {
+        showTermToast(ok ? label : "Copy failed");
+    });
+}
+function getTermRowTextAtClientY(clientY) {
+    const container = document.getElementById(
+        "xtermContainer"
+    );
+    const rect = container.getBoundingClientRect();
+    const rowHeight = rect.height / term.rows;
+    let rowIndex = Math.floor(
+        (clientY - rect.top) / rowHeight
+    );
+    rowIndex = Math.max(
+        0,
+        Math.min(term.rows - 1, rowIndex)
+    );
+    const buf = term.buffer.active;
+    const line = buf.getLine(buf.viewportY + rowIndex);
+    return line ? line.translateToString(true) : "";
+}
+function setupTerminalTouchCopy(container) {
+    let pressTimer = null;
+    let startPos = null;
+    container.addEventListener(
+        "touchstart",
+        (e) => {
+            if (e.touches.length !== 1) {
+                return;
+            }
+            const t = e.touches[0];
+            startPos = { x: t.clientX, y: t.clientY };
+            clearTimeout(pressTimer);
+            pressTimer = setTimeout(() => {
+                const text = getTermRowTextAtClientY(
+                    startPos.y
+                );
+                if (text) {
+                    copyTextToClipboard(text).then((ok) => {
+                        showTermToast(
+                            ok ? "Line copied" : "Copy failed"
+                        );
+                    });
+                    if (navigator.vibrate) {
+                        navigator.vibrate(15);
+                    }
+                }
+            }, 480);
+        },
+        { passive: true }
+    );
+    container.addEventListener(
+        "touchmove",
+        (e) => {
+            if (!startPos) {
+                return;
+            }
+            const t = e.touches[0];
+            if (
+                Math.abs(t.clientX - startPos.x) > 10 ||
+                Math.abs(t.clientY - startPos.y) > 10
+            ) {
+                clearTimeout(pressTimer);
+            }
+        },
+        { passive: true }
+    );
+    container.addEventListener(
+        "touchend",
+        () => {
+            clearTimeout(pressTimer);
+            startPos = null;
+        },
+        { passive: true }
+    );
+}
 function setTermStatus(status, title) {
     termStatusDot.className =
         "term-status-dot" +
@@ -1091,6 +1381,26 @@ function ensureTerminalWidget() {
      * or after too many contexts are open).
      */
     loadTerminalRenderer(term);
+    setupTerminalTouchCopy(
+        document.getElementById("xtermContainer")
+    );
+    term.attachCustomKeyEventHandler((e) => {
+        /*
+         * Ctrl/Cmd+C is taken by the shell for SIGINT, so
+         * copy lives on Ctrl/Cmd+Shift+C instead - the
+         * standard convention most terminal apps use.
+         */
+        if (
+            e.type === "keydown" &&
+            (e.ctrlKey || e.metaKey) &&
+            e.shiftKey &&
+            e.key.toLowerCase() === "c"
+        ) {
+            copyTerminalOutput();
+            return false;
+        }
+        return true;
+    });
     term.onData((data) => {
         if (
             termSocket &&
@@ -1138,6 +1448,9 @@ function connectTerminal(projectId, initialCommand) {
         } catch {}
         termSocket = null;
     }
+    clearTimeout(termFlushTimer);
+    termFlushTimer = null;
+    termLineBuffer = "";
     termConnectedProject = projectId;
     termConnecting = true;
     setTermStatus(
@@ -1180,15 +1493,18 @@ function connectTerminal(projectId, initialCommand) {
     };
     socket.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
-            term.write(
-                new Uint8Array(event.data)
+            const chunk = termTextDecoder.decode(
+                new Uint8Array(event.data),
+                { stream: true }
             );
+            feedTermData(chunk);
             return;
         }
         try {
             const msg =
                 JSON.parse(event.data);
             if (msg.type === "exit") {
+                flushTermLineBuffer();
                 term.write(
                     "\r\n\x1b[90m[shell exited - " +
                     "click Restart to start a new one]" +
@@ -1200,6 +1516,7 @@ function connectTerminal(projectId, initialCommand) {
                 );
             }
             else if (msg.type === "error") {
+                flushTermLineBuffer();
                 term.write(
                     "\r\n\x1b[31m" +
                     msg.message +
