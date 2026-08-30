@@ -609,6 +609,62 @@
             transform: translateX(-50%) translateY(0);
         }
         /* =========================
+           CAMERA
+        ========================= */
+        #cameraPane {
+            position: relative;
+        }
+        #cameraStage {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        #cameraVideoEl,
+        #cameraCaptureCanvas {
+            /* only used internally to grab frames - the
+               actual visible output is the processed feed
+               coming back from the server */
+            display: none;
+        }
+        #cameraDisplayCanvas {
+            max-width: 100%;
+            max-height: 100%;
+            display: none;
+        }
+        #cameraDisplayCanvas.show {
+            display: block;
+        }
+        #cameraPlaceholder {
+            color: #8b949e;
+            font-size: 13px;
+            text-align: center;
+            padding: 0 24px;
+            line-height: 1.6;
+        }
+        #cameraPlaceholder.hide {
+            display: none;
+        }
+        #cameraFps {
+            position: absolute;
+            top: 8px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.55);
+            color: #56d364;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 2px 7px;
+            border-radius: 5px;
+            display: none;
+        }
+        #cameraFps.show {
+            display: block;
+        }
+        /* =========================
            MOBILE
         ========================= */
         @media (max-width: 700px) {
@@ -843,6 +899,13 @@
                     >
                         TERMINAL
                     </button>
+                    <button
+                        id="cameraTabBtn"
+                        class="term-tab"
+                        onclick="setBottomTab('camera')"
+                    >
+                        📷 CAMERA
+                    </button>
                 </div>
                 <div
                     id="terminalToolbar"
@@ -875,6 +938,30 @@
                         🧹 Clear
                     </button>
                 </div>
+                <div
+                    id="cameraToolbar"
+                    class="term-toolbar"
+                >
+                    <span
+                        id="cameraStatusDot"
+                        class="term-status-dot"
+                        title="Stopped"
+                    ></span>
+                    <button
+                        class="term-tool-btn"
+                        id="cameraStartBtn"
+                        onclick="toggleCamera()"
+                    >
+                        ▶ Start
+                    </button>
+                    <button
+                        class="term-tool-btn"
+                        onclick="switchCameraFacing()"
+                        title="Switch front/back camera"
+                    >
+                        🔄 Flip
+                    </button>
+                </div>
             </div>
             <div
                 id="outputPane"
@@ -888,6 +975,29 @@
             >
                 <div id="xtermContainer"></div>
                 <div id="termToast"></div>
+            </div>
+            <div
+                id="cameraPane"
+                class="term-pane"
+            >
+                <div id="cameraStage">
+                    <video
+                        id="cameraVideoEl"
+                        autoplay
+                        playsinline
+                        muted
+                    ></video>
+                    <canvas id="cameraCaptureCanvas"></canvas>
+                    <canvas id="cameraDisplayCanvas"></canvas>
+                    <div id="cameraPlaceholder">
+                        📷 This runs your project's
+                        camera.py live on your phone's
+                        camera - hit Start, allow camera
+                        access, and edit camera.py to
+                        change what happens to the feed.
+                    </div>
+                    <div id="cameraFps"></div>
+                </div>
             </div>
         </section>
     </main>
@@ -1051,6 +1161,26 @@ const outputPane = document.getElementById("outputPane");
 const xtermPane = document.getElementById("xtermPane");
 const terminalToolbar = document.getElementById("terminalToolbar");
 const termStatusDot = document.getElementById("termStatusDot");
+const cameraTabBtn = document.getElementById("cameraTabBtn");
+const cameraPane = document.getElementById("cameraPane");
+const cameraToolbar = document.getElementById("cameraToolbar");
+const cameraStatusDot = document.getElementById(
+    "cameraStatusDot"
+);
+const cameraStartBtn = document.getElementById(
+    "cameraStartBtn"
+);
+const cameraVideoEl = document.getElementById("cameraVideoEl");
+const cameraCaptureCanvas = document.getElementById(
+    "cameraCaptureCanvas"
+);
+const cameraDisplayCanvas = document.getElementById(
+    "cameraDisplayCanvas"
+);
+const cameraPlaceholder = document.getElementById(
+    "cameraPlaceholder"
+);
+const cameraFpsEl = document.getElementById("cameraFps");
 let bottomTab = "output";
 let term = null;
 let fitAddon = null;
@@ -1624,6 +1754,10 @@ function setBottomTab(tab) {
         "active",
         tab === "terminal"
     );
+    cameraTabBtn.classList.toggle(
+        "active",
+        tab === "camera"
+    );
     outputPane.classList.toggle(
         "active",
         tab === "output"
@@ -1632,9 +1766,17 @@ function setBottomTab(tab) {
         "active",
         tab === "terminal"
     );
+    cameraPane.classList.toggle(
+        "active",
+        tab === "camera"
+    );
     terminalToolbar.classList.toggle(
         "show",
         tab === "terminal"
+    );
+    cameraToolbar.classList.toggle(
+        "show",
+        tab === "camera"
     );
     if (tab === "terminal") {
         ensureTerminalConnected();
@@ -2647,6 +2789,215 @@ document.addEventListener(
         }
     }
 );
+/* =====================================================
+   LIVE CAMERA (phone camera -> server OpenCV -> back)
+===================================================== */
+let cameraStream = null;
+let cameraSocket = null;
+let cameraRunning = false;
+let cameraFacingMode = "environment";
+let cameraCaptureTimer = null;
+let cameraFramesInFlight = 0;
+let cameraFpsCount = 0;
+let cameraFpsTimer = null;
+function setCameraStatus(status, title) {
+    cameraStatusDot.className =
+        "term-status-dot" +
+        (status !== "disconnected" ? " " + status : "");
+    cameraStatusDot.title = title || status;
+}
+function toggleCamera() {
+    if (cameraRunning) {
+        stopCamera("Stopped");
+    } else {
+        startCamera();
+    }
+}
+async function startCamera() {
+    if (!currentProject) {
+        alert("Open or create a project first.");
+        return;
+    }
+    if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+    ) {
+        alert(
+            "This browser doesn't support camera access " +
+            "(getUserMedia)."
+        );
+        return;
+    }
+    cameraStartBtn.disabled = true;
+    setCameraStatus("connecting", "Starting camera...");
+    try {
+        cameraStream =
+            await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: cameraFacingMode },
+                audio: false
+            });
+    } catch (error) {
+        cameraStartBtn.disabled = false;
+        setCameraStatus("error", String(error));
+        alert(
+            "Couldn't access the camera: " +
+            (error && error.message
+                ? error.message
+                : error)
+        );
+        return;
+    }
+    cameraVideoEl.srcObject = cameraStream;
+    await cameraVideoEl.play().catch(() => {});
+    const proto =
+        location.protocol === "https:" ? "wss:" : "ws:";
+    cameraSocket = new WebSocket(
+        proto +
+        "//" +
+        location.host +
+        "/ws/projects/" +
+        encodeURIComponent(currentProject) +
+        "/camera"
+    );
+    cameraSocket.binaryType = "arraybuffer";
+    cameraSocket.onopen = () => {
+        cameraRunning = true;
+        cameraStartBtn.disabled = false;
+        cameraStartBtn.textContent = "⏹ Stop";
+        setCameraStatus("connected", "Streaming");
+        cameraPlaceholder.classList.add("hide");
+        cameraDisplayCanvas.classList.add("show");
+        cameraFpsEl.classList.add("show");
+        cameraFpsCount = 0;
+        clearInterval(cameraFpsTimer);
+        cameraFpsTimer = setInterval(() => {
+            cameraFpsEl.textContent =
+                cameraFpsCount + " fps";
+            cameraFpsCount = 0;
+        }, 1000);
+        startCameraCaptureLoop();
+        loadFiles();
+    };
+    cameraSocket.onmessage = (event) => {
+        cameraFramesInFlight = Math.max(
+            0, cameraFramesInFlight - 1
+        );
+        cameraFpsCount++;
+        const blob = new Blob(
+            [event.data], { type: "image/jpeg" }
+        );
+        createImageBitmap(blob).then((bitmap) => {
+            cameraDisplayCanvas.width = bitmap.width;
+            cameraDisplayCanvas.height = bitmap.height;
+            cameraDisplayCanvas
+                .getContext("2d")
+                .drawImage(bitmap, 0, 0);
+            bitmap.close();
+        }).catch(() => {});
+    };
+    cameraSocket.onerror = () => {
+        setCameraStatus("error", "Connection error");
+    };
+    cameraSocket.onclose = () => {
+        stopCamera(
+            cameraRunning ? "Connection closed" : null
+        );
+    };
+}
+function startCameraCaptureLoop() {
+    const ctx = cameraCaptureCanvas.getContext("2d");
+    /*
+     * Capped resolution + a modest ~10fps interval keeps
+     * bandwidth and server CPU (OpenCV runs per frame, in
+     * a worker thread) reasonable on a phone connection.
+     */
+    const MAX_W = 480;
+    clearInterval(cameraCaptureTimer);
+    cameraCaptureTimer = setInterval(() => {
+        if (
+            !cameraRunning ||
+            !cameraSocket ||
+            cameraSocket.readyState !== WebSocket.OPEN
+        ) {
+            return;
+        }
+        const vw = cameraVideoEl.videoWidth;
+        const vh = cameraVideoEl.videoHeight;
+        if (!vw || !vh) {
+            return;
+        }
+        /*
+         * Basic backpressure: if the server hasn't finished
+         * processing recent frames yet, skip capturing a new
+         * one rather than piling up a backlog and falling
+         * further and further behind real time.
+         */
+        if (cameraFramesInFlight >= 2) {
+            return;
+        }
+        const scale = Math.min(1, MAX_W / vw);
+        const w = Math.round(vw * scale);
+        const h = Math.round(vh * scale);
+        cameraCaptureCanvas.width = w;
+        cameraCaptureCanvas.height = h;
+        ctx.drawImage(cameraVideoEl, 0, 0, w, h);
+        cameraCaptureCanvas.toBlob(
+            (blob) => {
+                if (
+                    blob &&
+                    cameraSocket &&
+                    cameraSocket.readyState ===
+                        WebSocket.OPEN
+                ) {
+                    cameraFramesInFlight++;
+                    cameraSocket.send(blob);
+                }
+            },
+            "image/jpeg",
+            0.7
+        );
+    }, 100);
+}
+function stopCamera(statusTitle) {
+    cameraRunning = false;
+    clearInterval(cameraCaptureTimer);
+    cameraCaptureTimer = null;
+    clearInterval(cameraFpsTimer);
+    cameraFpsTimer = null;
+    cameraFpsEl.classList.remove("show");
+    if (cameraSocket) {
+        try {
+            cameraSocket.onclose = null;
+            cameraSocket.close();
+        } catch {}
+        cameraSocket = null;
+    }
+    if (cameraStream) {
+        cameraStream
+            .getTracks()
+            .forEach((track) => track.stop());
+        cameraStream = null;
+    }
+    cameraVideoEl.srcObject = null;
+    cameraStartBtn.disabled = false;
+    cameraStartBtn.textContent = "▶ Start";
+    cameraDisplayCanvas.classList.remove("show");
+    cameraPlaceholder.classList.remove("hide");
+    setCameraStatus(
+        "disconnected",
+        statusTitle || "Stopped"
+    );
+}
+function switchCameraFacing() {
+    cameraFacingMode =
+        cameraFacingMode === "environment"
+            ? "user"
+            : "environment";
+    if (cameraRunning) {
+        stopCamera(null);
+        startCamera();
+    }
+}
 /* =====================================================
    START APPLICATION
 ===================================================== */
