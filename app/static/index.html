@@ -624,11 +624,26 @@
             position: relative;
             overflow: hidden;
         }
-        #cameraVideoEl,
+        #cameraVideoEl {
+            /*
+             * Only used internally to grab frames - but
+             * `display: none` makes many mobile browsers
+             * stop actually decoding video frames entirely
+             * (videoWidth/videoHeight stay 0 forever), which
+             * silently breaks capture. Keeping it "on-screen"
+             * but invisible/out of the way avoids that.
+             */
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            opacity: 0;
+            pointer-events: none;
+            top: 0;
+            left: 0;
+        }
         #cameraCaptureCanvas {
-            /* only used internally to grab frames - the
-               actual visible output is the processed feed
-               coming back from the server */
+            /* a canvas isn't subject to the same issue -
+               drawImage/toBlob work fine while hidden */
             display: none;
         }
         #cameraDisplayCanvas {
