@@ -1408,29 +1408,6 @@ def _load_camera_processor(project_id: str, camera_file: Path):
     return result
 
 
-def _run_camera_frame(process_fn, frame):
-    """
-    Runs in a worker thread (via run_in_executor) so a slow or
-    stuck process_frame() can't block the whole event loop -
-    every other websocket/request the server is handling.
-    """
-
-    try:
-        result = process_fn(frame)
-
-    except Exception as error:
-        return None, f"{type(error).__name__}: {error}"
-
-    if result is None or not hasattr(result, "shape"):
-        return None, (
-            "process_frame must return a NumPy image "
-            "(it returned "
-            f"{type(result).__name__})"
-        )
-
-    return result, None
-
-
 def _draw_camera_error(frame, message: str):
     """
     Overlays an error message on the passthrough frame so a
@@ -1485,6 +1462,72 @@ def _draw_camera_error(frame, message: str):
     return frame
 
 
+def _process_and_encode_camera_frame(
+    data: bytes, process_fn, load_error
+):
+    """
+    Decode -> run process_frame -> re-encode, all in a single
+    call so it's one dispatch to a worker thread per frame
+    instead of three separate hops between the event loop and
+    the thread pool. That per-frame overhead was the main
+    thing capping throughput well below what the actual
+    OpenCV work and network transfer needed.
+    """
+
+    array = np.frombuffer(data, dtype=np.uint8)
+    frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return None
+
+    if load_error:
+        output = _draw_camera_error(frame, load_error)
+
+    else:
+
+        try:
+            result = process_fn(frame)
+
+        except Exception as error:
+            output = _draw_camera_error(
+                frame, f"{type(error).__name__}: {error}"
+            )
+
+        else:
+
+            if result is None or not hasattr(
+                result, "shape"
+            ):
+                output = _draw_camera_error(
+                    frame,
+                    "process_frame must return a NumPy "
+                    "image (it returned "
+                    f"{type(result).__name__})"
+                )
+
+            else:
+                output = result
+
+                if (
+                    hasattr(output, "ndim")
+                    and output.ndim == 2
+                ):
+                    output = cv2.cvtColor(
+                        output, cv2.COLOR_GRAY2BGR
+                    )
+
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        output,
+        [cv2.IMWRITE_JPEG_QUALITY, 60]
+    )
+
+    if not ok:
+        return None
+
+    return encoded.tobytes()
+
+
 @app.websocket(
     "/ws/projects/{project_id}/camera"
 )
@@ -1535,68 +1578,33 @@ async def project_camera(
             if not data:
                 continue
 
-            array = np.frombuffer(data, dtype=np.uint8)
-            frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
-
-            if frame is None:
-                continue
-
             process_fn, load_error = _load_camera_processor(
                 project_id, camera_file
             )
 
-            if load_error:
-                output = _draw_camera_error(
-                    frame, load_error
+            try:
+                encoded_bytes = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        _process_and_encode_camera_frame,
+                        data, process_fn, load_error
+                    ),
+                    timeout=2.0
                 )
 
-            else:
+            except asyncio.TimeoutError:
+                # A single pathologically slow frame just
+                # gets skipped (the feed briefly holds on the
+                # last good frame) rather than blocking the
+                # connection - persistent timeouts mean
+                # process_frame itself is too slow for video.
+                continue
 
-                try:
-                    result, run_error = await asyncio.wait_for(
-                        loop.run_in_executor(
-                            None, _run_camera_frame,
-                            process_fn, frame
-                        ),
-                        timeout=2.0
-                    )
-
-                except asyncio.TimeoutError:
-                    result, run_error = (
-                        None,
-                        "process_frame took too long "
-                        "(over 2s) on this frame."
-                    )
-
-                if run_error:
-                    output = _draw_camera_error(
-                        frame, run_error
-                    )
-
-                else:
-                    output = result
-
-                    if (
-                        hasattr(output, "ndim")
-                        and output.ndim == 2
-                    ):
-                        output = cv2.cvtColor(
-                            output, cv2.COLOR_GRAY2BGR
-                        )
-
-            ok, encoded = cv2.imencode(
-                ".jpg",
-                output,
-                [cv2.IMWRITE_JPEG_QUALITY, 70]
-            )
-
-            if not ok:
+            if not encoded_bytes:
                 continue
 
             try:
-                await websocket.send_bytes(
-                    encoded.tobytes()
-                )
+                await websocket.send_bytes(encoded_bytes)
 
             except Exception:
                 break
