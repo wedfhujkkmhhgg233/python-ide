@@ -874,6 +874,55 @@ TERMINAL_SHELL = (
     or shutil.which("sh")
     or "/bin/sh"
 )
+TERMINAL_IS_BASH = os.path.basename(TERMINAL_SHELL) == "bash"
+
+# A minimal, self-contained bash rc file for the in-browser
+# terminal. The base image's own ~/.bashrc (root's, in this
+# container) sets its own PS1 unconditionally, which is what
+# was clobbering the short colored prompt below and leaving
+# the terminal showing the full "root@<long-container-id>:
+# /full/path#" line - noisy and easy to lose the actual
+# output in. Pointing bash at this file instead (via
+# --rcfile) sidesteps that entirely, and also turns color on
+# for ls/grep the way a normal dev machine's shell would.
+_TERM_RC_PATH = os.path.join(
+    tempfile.gettempdir(), "python_ide_termrc.sh"
+)
+_TERM_RC_CONTENT = r"""
+if command -v dircolors >/dev/null 2>&1; then
+    eval "$(dircolors -b 2>/dev/null)"
+fi
+alias ls='ls --color=auto'
+alias grep='grep --color=auto'
+alias fgrep='fgrep --color=auto'
+alias egrep='egrep --color=auto'
+if diff --color=auto /dev/null /dev/null >/dev/null 2>&1; then
+    alias diff='diff --color=auto'
+fi
+export CLICOLOR=1
+export FORCE_COLOR=1
+# Short + colorful: cyan-green folder name, blue prompt
+# symbol ('#' for root, '$' otherwise, via bash's \$).
+export PS1='\[\e[38;5;114m\]\W\[\e[0m\] \[\e[38;5;81m\]\$\[\e[0m\] '
+"""
+
+
+def _ensure_term_rc() -> str:
+    """
+    Write (once) the terminal's rc file to a fixed path in
+    /tmp so bash can be pointed at it with --rcfile. Cheap
+    to re-write on every call, so no need to guard against
+    concurrent servers/reloads disagreeing about its content.
+    """
+
+    try:
+        with open(_TERM_RC_PATH, "w") as rc_file:
+            rc_file.write(_TERM_RC_CONTENT)
+
+    except Exception:
+        pass
+
+    return _TERM_RC_PATH
 
 
 async def _reap_child(pid: int) -> None:
@@ -995,14 +1044,27 @@ async def project_terminal(
         env["PYTHONUNBUFFERED"] = "1"
         env.setdefault("LANG", "C.UTF-8")
         env.setdefault("LC_ALL", "C.UTF-8")
-        env["PS1"] = "\\[\\e[36m\\]\\W\\[\\e[0m\\] $ "
 
         try:
-            os.execvpe(
-                TERMINAL_SHELL,
-                [TERMINAL_SHELL],
-                env
-            )
+            if TERMINAL_IS_BASH:
+                os.execvpe(
+                    TERMINAL_SHELL,
+                    [
+                        TERMINAL_SHELL,
+                        "--rcfile",
+                        _ensure_term_rc()
+                    ],
+                    env
+                )
+            else:
+                env["PS1"] = (
+                    "\\[\\e[36m\\]\\W\\[\\e[0m\\] $ "
+                )
+                os.execvpe(
+                    TERMINAL_SHELL,
+                    [TERMINAL_SHELL],
+                    env
+                )
 
         except Exception:
             os._exit(1)
