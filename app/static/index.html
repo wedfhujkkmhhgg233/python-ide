@@ -1138,7 +1138,11 @@ function flushTermLineBuffer() {
     clearTimeout(termFlushTimer);
     termFlushTimer = null;
     if (termLineBuffer) {
-        term.write(highlightTermLine(termLineBuffer));
+        term.write(
+            highlightTermLine(
+                termLineBuffer.replace(/\r$/, "")
+            )
+        );
         termLineBuffer = "";
     }
 }
@@ -1156,8 +1160,11 @@ function feedTermData(chunkStr) {
     termLineBuffer = lines.pop();
     if (lines.length) {
         term.write(
-            lines.map(highlightTermLine).join("\r\n") +
-                "\r\n"
+            lines
+                .map((l) =>
+                    highlightTermLine(l.replace(/\r$/, ""))
+                )
+                .join("\r\n") + "\r\n"
         );
     }
     clearTimeout(termFlushTimer);
