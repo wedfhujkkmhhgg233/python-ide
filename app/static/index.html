@@ -2922,15 +2922,22 @@ async function startCamera() {
 function startCameraCaptureLoop() {
     const ctx = cameraCaptureCanvas.getContext("2d");
     /*
-     * Smaller frames + a tighter interval: the previous
-     * 480px/quality-0.7/100ms settings were mostly limited
-     * by round-trip time (network + decode/process/encode),
-     * not by this interval - so a smaller, cheaper frame
-     * moves more of them through per second. The interval
-     * itself is now just an upper ceiling (~20fps); actual
-     * throughput is governed by the in-flight cap below.
+     * Low-data middle ground: bigger/clearer than the
+     * ultra-low-data settings but still slow and compressed,
+     * targeting roughly 30-40 KB/s instead of ~10-15 KB/s
+     * (blurrier) or ~150-300 KB/s (full quality). There's no
+     * way around this trade with per-frame JPEGs; a real
+     * video codec would need WebRTC instead.
      */
-    const MAX_W = 360;
+    const MAX_W = 240;
+    /*
+     * Drawing through a grayscale filter before compressing
+     * shrinks the *uploaded* JPEG too (not just the one coming
+     * back), since a real color photo has genuine per-pixel
+     * color detail that costs real bytes - stripping it before
+     * encoding, not after, is what actually saves that data.
+     */
+    const supportsFilter = "filter" in ctx;
     clearInterval(cameraCaptureTimer);
     cameraCaptureTimer = setInterval(() => {
         if (
@@ -2946,14 +2953,12 @@ function startCameraCaptureLoop() {
             return;
         }
         /*
-         * Basic backpressure: if the server hasn't finished
-         * processing recent frames yet, skip capturing a new
-         * one rather than piling up a backlog and falling
-         * further and further behind real time. Raised from
-         * 2 to 3 to give a little more pipelining headroom
-         * on higher-latency mobile connections.
+         * Strict one-frame-at-a-time: don't capture the next
+         * frame until the previous one's result has come back.
+         * This is what actually enforces the slow, low-data
+         * rate, rather than relying on the interval alone.
          */
-        if (cameraFramesInFlight >= 3) {
+        if (cameraFramesInFlight >= 1) {
             return;
         }
         const scale = Math.min(1, MAX_W / vw);
@@ -2961,7 +2966,13 @@ function startCameraCaptureLoop() {
         const h = Math.round(vh * scale);
         cameraCaptureCanvas.width = w;
         cameraCaptureCanvas.height = h;
+        if (supportsFilter) {
+            ctx.filter = "grayscale(1)";
+        }
         ctx.drawImage(cameraVideoEl, 0, 0, w, h);
+        if (supportsFilter) {
+            ctx.filter = "none";
+        }
         cameraCaptureCanvas.toBlob(
             (blob) => {
                 if (
@@ -2975,9 +2986,9 @@ function startCameraCaptureLoop() {
                 }
             },
             "image/jpeg",
-            0.6
+            0.5
         );
-    }, 50);
+    }, 350);
 }
 function stopCamera(statusTitle) {
     cameraRunning = false;
