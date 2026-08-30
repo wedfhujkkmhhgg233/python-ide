@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from pathlib import Path
 import asyncio
+import importlib.util
 import json
 import os
 import signal
@@ -26,6 +27,16 @@ except ImportError:  # pragma: no cover - non-POSIX platforms
     fcntl = None
     termios = None
     pty = None
+
+# Used by the live Camera feature to decode/encode JPEG frames
+# and run each project's camera.py. Optional import so the rest
+# of the app still starts even if this hasn't been installed.
+try:
+    import cv2
+    import numpy as np
+except ImportError:  # pragma: no cover
+    cv2 = None
+    np = None
 
 
 app = FastAPI(title="Python IDE")
@@ -1274,6 +1285,323 @@ async def project_terminal(
         asyncio.create_task(
             _reap_child(pid)
         )
+
+        try:
+            await websocket.close()
+
+        except Exception:
+            pass
+
+
+# =========================================================
+# LIVE CAMERA (phone camera -> OpenCV -> back to browser)
+# =========================================================
+#
+# The server has no camera of its own - it's a remote container,
+# so `cv2.VideoCapture(0)` would have nothing to open here. What
+# this does instead: the browser captures the *user's* phone
+# camera, ships each frame to this endpoint as a JPEG over a
+# websocket, the project's own camera.py runs on it with OpenCV,
+# and the result streams back to be shown live. Editing and
+# saving camera.py takes effect on the very next frame - no
+# restart needed.
+
+CAMERA_STARTER_CONTENT = '''"""
+Powers the live Camera tab. For every frame the server gets
+from your phone's camera, it calls process_frame() below and
+streams back whatever you return. Edit this, hit save, and
+the next frame uses your new code - no restart needed.
+
+`frame` is a BGR NumPy image (OpenCV's usual color order).
+Return a NumPy image - color or grayscale - to display it.
+"""
+import cv2
+
+
+def process_frame(frame):
+    # Try one of these, or write your own OpenCV code.
+
+    # Grayscale (on by default so you can see it's working):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return gray
+
+    # Edge detection:
+    # edges = cv2.Canny(frame, 100, 200)
+    # return edges
+
+    # Face detection boxes:
+    # cascade = cv2.CascadeClassifier(
+    #     cv2.data.haarcascades
+    #     + "haarcascade_frontalface_default.xml"
+    # )
+    # gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # for (x, y, w, h) in cascade.detectMultiScale(gray, 1.3, 5):
+    #     cv2.rectangle(
+    #         frame, (x, y), (x + w, y + h), (0, 255, 0), 2
+    #     )
+    # return frame
+'''
+
+# project_id -> (mtime, process_frame_callable_or_None, error_or_None)
+_camera_module_cache: dict = {}
+
+
+def _load_camera_processor(project_id: str, camera_file: Path):
+    """
+    (Re)loads a project's camera.py only when its mtime has
+    changed since the last frame, so editing it takes effect
+    live without paying import cost on every single frame.
+    Returns (process_fn, error_message) - exactly one is None.
+    """
+
+    if not camera_file.is_file():
+        try:
+            camera_file.write_text(
+                CAMERA_STARTER_CONTENT,
+                encoding="utf-8"
+            )
+
+        except Exception as error:
+            return None, f"Could not create camera.py: {error}"
+
+    try:
+        mtime = camera_file.stat().st_mtime
+
+    except OSError as error:
+        return None, f"Could not read camera.py: {error}"
+
+    cached = _camera_module_cache.get(project_id)
+
+    if cached and cached[0] == mtime:
+        return cached[1], cached[2]
+
+    module_name = f"_camera_module_{project_id.replace('-', '_')}"
+
+    try:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            str(camera_file)
+        )
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        process_fn = getattr(module, "process_frame", None)
+
+        if not callable(process_fn):
+            result = (
+                None,
+                "camera.py must define a "
+                "process_frame(frame) function."
+            )
+
+        else:
+            result = (process_fn, None)
+
+    except Exception as error:
+        result = (None, f"{type(error).__name__}: {error}")
+
+    _camera_module_cache[project_id] = (
+        mtime, result[0], result[1]
+    )
+
+    return result
+
+
+def _run_camera_frame(process_fn, frame):
+    """
+    Runs in a worker thread (via run_in_executor) so a slow or
+    stuck process_frame() can't block the whole event loop -
+    every other websocket/request the server is handling.
+    """
+
+    try:
+        result = process_fn(frame)
+
+    except Exception as error:
+        return None, f"{type(error).__name__}: {error}"
+
+    if result is None or not hasattr(result, "shape"):
+        return None, (
+            "process_frame must return a NumPy image "
+            "(it returned "
+            f"{type(result).__name__})"
+        )
+
+    return result, None
+
+
+def _draw_camera_error(frame, message: str):
+    """
+    Overlays an error message on the passthrough frame so a
+    bug in camera.py shows up right on the live feed itself,
+    the same way a traceback shows up in the terminal - instead
+    of the stream just silently freezing or dropping.
+    """
+
+    if cv2 is None:
+        return frame
+
+    banner_height = 60
+    overlay = frame.copy()
+
+    cv2.rectangle(
+        overlay,
+        (0, 0),
+        (overlay.shape[1], banner_height),
+        (0, 0, 0),
+        -1
+    )
+
+    frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
+
+    text = message.strip().replace("\n", " ")
+
+    if len(text) > 70:
+        text = text[:67] + "..."
+
+    cv2.putText(
+        frame,
+        "camera.py error:",
+        (10, 20),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 0, 255),
+        1,
+        cv2.LINE_AA
+    )
+
+    cv2.putText(
+        frame,
+        text,
+        (10, 44),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 0, 255),
+        1,
+        cv2.LINE_AA
+    )
+
+    return frame
+
+
+@app.websocket(
+    "/ws/projects/{project_id}/camera"
+)
+async def project_camera(
+    websocket: WebSocket,
+    project_id: str
+):
+
+    await websocket.accept()
+
+    try:
+        project = project_path(project_id)
+
+    except ValueError:
+        await websocket.close(code=4000)
+        return
+
+    if not project.is_dir():
+        await websocket.close(code=4004)
+        return
+
+    if cv2 is None or np is None:
+
+        await websocket.send_text(
+            json.dumps({
+                "type": "error",
+                "message":
+                    "opencv-python-headless is not "
+                    "installed on this server."
+            })
+        )
+
+        await websocket.close(code=1011)
+        return
+
+    camera_file = project / "camera.py"
+    loop = asyncio.get_event_loop()
+
+    try:
+        while True:
+
+            try:
+                data = await websocket.receive_bytes()
+
+            except Exception:
+                break
+
+            if not data:
+                continue
+
+            array = np.frombuffer(data, dtype=np.uint8)
+            frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                continue
+
+            process_fn, load_error = _load_camera_processor(
+                project_id, camera_file
+            )
+
+            if load_error:
+                output = _draw_camera_error(
+                    frame, load_error
+                )
+
+            else:
+
+                try:
+                    result, run_error = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None, _run_camera_frame,
+                            process_fn, frame
+                        ),
+                        timeout=2.0
+                    )
+
+                except asyncio.TimeoutError:
+                    result, run_error = (
+                        None,
+                        "process_frame took too long "
+                        "(over 2s) on this frame."
+                    )
+
+                if run_error:
+                    output = _draw_camera_error(
+                        frame, run_error
+                    )
+
+                else:
+                    output = result
+
+                    if (
+                        hasattr(output, "ndim")
+                        and output.ndim == 2
+                    ):
+                        output = cv2.cvtColor(
+                            output, cv2.COLOR_GRAY2BGR
+                        )
+
+            ok, encoded = cv2.imencode(
+                ".jpg",
+                output,
+                [cv2.IMWRITE_JPEG_QUALITY, 70]
+            )
+
+            if not ok:
+                continue
+
+            try:
+                await websocket.send_bytes(
+                    encoded.tobytes()
+                )
+
+            except Exception:
+                break
+
+    finally:
 
         try:
             await websocket.close()
