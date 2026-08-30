@@ -1519,7 +1519,7 @@ def _process_and_encode_camera_frame(
     ok, encoded = cv2.imencode(
         ".jpg",
         output,
-        [cv2.IMWRITE_JPEG_QUALITY, 60]
+        [cv2.IMWRITE_JPEG_QUALITY, 50]
     )
 
     if not ok:
