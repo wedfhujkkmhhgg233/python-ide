@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
 import importlib.util
@@ -14,6 +15,14 @@ import sys
 import tempfile
 import uuid
 import shutil
+
+# Postgres-backed persistence (see the "PERSISTENCE" section below).
+# Optional import so the app still starts locally even if this
+# hasn't been installed / no database is configured.
+try:
+    import asyncpg
+except ImportError:  # pragma: no cover
+    asyncpg = None
 
 # fcntl/termios/pty are POSIX-only. The container this runs in
 # (python:3.12-slim on Linux) always has them, but importing this
@@ -39,7 +48,326 @@ except ImportError:  # pragma: no cover
     np = None
 
 
-app = FastAPI(title="Python IDE")
+# =========================================================
+# PERSISTENCE (Postgres)
+# =========================================================
+#
+# PROJECTS_DIR below is local disk - on Render's free plan
+# (and generally, any container without an attached volume)
+# that disk is wiped on every restart/redeploy. To survive
+# that, Postgres is the source of truth for project files;
+# PROJECTS_DIR is just a working *cache* the rest of the app
+# (the run button, the terminal, the camera feature) reads
+# and writes like normal local files.
+#
+# - On startup, every project/file is restored from the DB
+#   onto disk.
+# - Every write through the file API (save, delete, rename,
+#   new project) is mirrored to the DB immediately.
+# - The interactive terminal can also change files in ways
+#   the API never sees (pip install, rm, mv, a text editor
+#   run inside the shell). For that, db_full_resync() walks
+#   a project's folder and reconciles the DB to match it -
+#   run periodically while a terminal is open and once more
+#   when it closes.
+#
+# If DATABASE_URL isn't set (e.g. running locally), all of
+# this quietly no-ops and the app behaves as it did before -
+# projects just won't survive a restart.
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+db_pool = None  # asyncpg.Pool, set during startup
+
+_SYNC_EXCLUDED_DIR_NAMES = {
+    "__pycache__", ".git", ".venv", "venv",
+    "node_modules", ".mypy_cache", ".pytest_cache"
+}
+_SYNC_MAX_FILE_BYTES = 2_000_000
+
+# asyncpg's DSN parser only recognizes a fixed set of query-string
+# options (sslmode, sslcert, etc.) - anything else it doesn't
+# recognize gets forwarded to Postgres as a server setting instead
+# of a connection option. Neon (and some other hosts) append
+# channel_binding=require to their connection strings, which trips
+# this: it isn't a valid server setting, so the connection fails
+# with "unrecognized configuration parameter". Stripping it here
+# is safe - it doesn't weaken the connection, since sslmode=require
+# already guarantees the traffic is encrypted.
+_ASYNCPG_UNSUPPORTED_DSN_PARAMS = {"channel_binding"}
+
+
+def _sanitize_dsn_for_asyncpg(dsn: str) -> str:
+
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+    parts = urlsplit(dsn)
+
+    query_pairs = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key not in _ASYNCPG_UNSUPPORTED_DSN_PARAMS
+    ]
+
+    return urlunsplit((
+        parts.scheme,
+        parts.netloc,
+        parts.path,
+        urlencode(query_pairs),
+        parts.fragment
+    ))
+
+
+async def db_init_pool():
+
+    global db_pool
+
+    if not DATABASE_URL:
+        print(
+            "DATABASE_URL is not set - projects will NOT "
+            "persist across restarts."
+        )
+        return
+
+    if asyncpg is None:
+        print(
+            "asyncpg is not installed - projects will NOT "
+            "persist across restarts."
+        )
+        return
+
+    db_pool = await asyncpg.create_pool(
+        _sanitize_dsn_for_asyncpg(DATABASE_URL),
+        min_size=1, max_size=5
+    )
+
+    async with db_pool.acquire() as conn:
+
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """
+        )
+
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_files (
+                project_id TEXT NOT NULL REFERENCES
+                    projects(id) ON DELETE CASCADE,
+                path TEXT NOT NULL,
+                content TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (project_id, path)
+            );
+            """
+        )
+
+    print("Connected to the database.")
+
+
+async def db_restore_projects_to_disk():
+
+    if db_pool is None:
+        return
+
+    async with db_pool.acquire() as conn:
+
+        projects = await conn.fetch("SELECT id FROM projects")
+
+        for row in projects:
+
+            project_id = row["id"]
+
+            try:
+                folder = project_path(project_id)
+            except ValueError:
+                continue
+
+            folder.mkdir(parents=True, exist_ok=True)
+
+            files = await conn.fetch(
+                "SELECT path, content FROM project_files "
+                "WHERE project_id = $1",
+                project_id
+            )
+
+            for file_row in files:
+
+                try:
+                    relative = safe_relative_path(
+                        file_row["path"]
+                    )
+                except ValueError:
+                    continue
+
+                target = folder / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(
+                    file_row["content"], encoding="utf-8"
+                )
+
+    print(
+        f"Restored {len(projects)} project(s) from the database."
+    )
+
+
+async def db_save_project(project_id: str, name: str):
+
+    if db_pool is None:
+        return
+
+    async with db_pool.acquire() as conn:
+
+        await conn.execute(
+            """
+            INSERT INTO projects (id, name)
+            VALUES ($1, $2)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            project_id, name
+        )
+
+
+async def db_save_file(project_id: str, path: str, content: str):
+
+    if db_pool is None:
+        return
+
+    async with db_pool.acquire() as conn:
+
+        await conn.execute(
+            """
+            INSERT INTO project_files
+                (project_id, path, content, updated_at)
+            VALUES ($1, $2, $3, now())
+            ON CONFLICT (project_id, path)
+            DO UPDATE SET
+                content = EXCLUDED.content,
+                updated_at = now()
+            """,
+            project_id, path, content
+        )
+
+
+async def db_delete_file(project_id: str, path: str):
+
+    if db_pool is None:
+        return
+
+    async with db_pool.acquire() as conn:
+
+        await conn.execute(
+            "DELETE FROM project_files "
+            "WHERE project_id = $1 AND path = $2",
+            project_id, path
+        )
+
+
+def _should_sync_path(relative_parts) -> bool:
+
+    return not any(
+        part in _SYNC_EXCLUDED_DIR_NAMES
+        for part in relative_parts
+    )
+
+
+async def db_full_resync(project_id: str):
+    """
+    Walks a project's folder on disk and makes the database
+    match it exactly. This is what catches changes made
+    outside the file-editor API - e.g. through the
+    interactive terminal (pip install, rm, mv, an editor
+    run inside the shell).
+    """
+
+    if db_pool is None:
+        return
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return
+
+    if not folder.is_dir():
+        return
+
+    disk_files = {}
+
+    for path in folder.rglob("*"):
+
+        if not path.is_file():
+            continue
+
+        relative = path.relative_to(folder)
+
+        if not _should_sync_path(relative.parts):
+            continue
+
+        try:
+
+            if path.stat().st_size > _SYNC_MAX_FILE_BYTES:
+                continue
+
+            content = path.read_text(encoding="utf-8")
+
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        disk_files[relative.as_posix()] = content
+
+    async with db_pool.acquire() as conn:
+
+        db_rows = await conn.fetch(
+            "SELECT path FROM project_files WHERE project_id = $1",
+            project_id
+        )
+        db_paths = {row["path"] for row in db_rows}
+
+        to_delete = db_paths - set(disk_files.keys())
+
+        async with conn.transaction():
+
+            for path in to_delete:
+
+                await conn.execute(
+                    "DELETE FROM project_files "
+                    "WHERE project_id = $1 AND path = $2",
+                    project_id, path
+                )
+
+            for path, content in disk_files.items():
+
+                await conn.execute(
+                    """
+                    INSERT INTO project_files
+                        (project_id, path, content, updated_at)
+                    VALUES ($1, $2, $3, now())
+                    ON CONFLICT (project_id, path)
+                    DO UPDATE SET
+                        content = EXCLUDED.content,
+                        updated_at = now()
+                    """,
+                    project_id, path, content
+                )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+
+    await db_init_pool()
+    await db_restore_projects_to_disk()
+
+    yield
+
+    if db_pool is not None:
+        await db_pool.close()
+
+
+app = FastAPI(title="Python IDE", lifespan=lifespan)
 
 # Resolve paths relative to this file instead of the process's current
 # working directory. Previously these were relative strings like
@@ -219,12 +547,19 @@ async def create_project(
     )
 
 
+    starter_content = (
+        'print("Hello from your Python project!")\n'
+    )
+
     (
         folder / "main.py"
     ).write_text(
-        'print("Hello from your Python project!")\n',
+        starter_content,
         encoding="utf-8"
     )
+
+    await db_save_project(project_id, project_id)
+    await db_save_file(project_id, "main.py", starter_content)
 
 
     return {
@@ -457,6 +792,10 @@ async def write_file(
         encoding="utf-8"
     )
 
+    await db_save_file(
+        project_id, relative.as_posix(), content
+    )
+
 
     return {
         "ok": True,
@@ -511,6 +850,10 @@ async def delete_file(
 
 
     target.unlink()
+
+    await db_delete_file(
+        project_id, relative.as_posix()
+    )
 
 
     return {
@@ -641,6 +984,25 @@ async def rename_file(
 
     source.rename(
         destination
+    )
+
+    try:
+        moved_content = destination.read_text(
+            encoding="utf-8"
+        )
+
+    except UnicodeDecodeError:
+        moved_content = None
+
+    if moved_content is not None:
+        await db_save_file(
+            project_id,
+            new_relative.as_posix(),
+            moved_content
+        )
+
+    await db_delete_file(
+        project_id, old_relative.as_posix()
     )
 
 
@@ -1253,6 +1615,20 @@ async def project_terminal(
     output_task = asyncio.create_task(pump_output())
     input_task = asyncio.create_task(pump_input())
 
+    # The shell can change files in ways the file-editor API
+    # never sees (pip install, rm, mv, an editor run inside
+    # the terminal itself). Periodically reconcile the DB to
+    # whatever is actually on disk while the session is open,
+    # in case the server restarts before the user closes the
+    # tab - and once more, for certain, when it closes.
+    async def periodic_resync():
+
+        while True:
+            await asyncio.sleep(20)
+            await db_full_resync(project_id)
+
+    resync_task = asyncio.create_task(periodic_resync())
+
     try:
         await asyncio.wait(
             {output_task, input_task},
@@ -1261,7 +1637,7 @@ async def project_terminal(
 
     finally:
 
-        for task in (output_task, input_task):
+        for task in (output_task, input_task, resync_task):
             task.cancel()
 
         try:
@@ -1285,6 +1661,8 @@ async def project_terminal(
         asyncio.create_task(
             _reap_child(pid)
         )
+
+        await db_full_resync(project_id)
 
         try:
             await websocket.close()
