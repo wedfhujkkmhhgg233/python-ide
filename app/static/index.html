@@ -294,6 +294,22 @@
             font-size: 10px;
             color: #8b949e;
         }
+        .folder-add-btn {
+            flex-shrink: 0;
+            margin-left: auto;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #8b949e;
+        }
+        .folder-add-btn:hover {
+            background: #30363d;
+            color: #c9d1d9;
+        }
         .file.drop-target {
             background: #1f6feb33;
             outline: 1px dashed #58a6ff;
@@ -2803,6 +2819,23 @@ function renderFolderRow(
         );
     name.className = "file-name";
     name.textContent = node.name;
+    const addFileBtn =
+        document.createElement(
+            "span"
+        );
+    addFileBtn.className = "folder-add-btn";
+    addFileBtn.textContent = "＋";
+    addFileBtn.title = "New file in this folder";
+    addFileBtn.onclick =
+        (event) => {
+            event.stopPropagation();
+            expandedFolders.add(
+                node.path
+            );
+            newFile(
+                node.path
+            );
+        };
     item.appendChild(
         arrow
     );
@@ -2811,6 +2844,9 @@ function renderFolderRow(
     );
     item.appendChild(
         name
+    );
+    item.appendChild(
+        addFileBtn
     );
     item.title = node.path;
     attachRowDrag(
