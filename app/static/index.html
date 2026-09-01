@@ -288,6 +288,19 @@
             color: #8b949e;
             font-size: 12px;
         }
+        .folder-arrow {
+            flex-shrink: 0;
+            width: 12px;
+            font-size: 10px;
+            color: #8b949e;
+        }
+        .file.drop-target {
+            background: #1f6feb33;
+            outline: 1px dashed #58a6ff;
+        }
+        .file.dragging {
+            opacity: 0.4;
+        }
         /* =========================
            EDITOR AREA
         ========================= */
@@ -810,6 +823,25 @@
         ＋ File
     </button>
     <button
+        onclick="newFolder()"
+        title="Create a new folder"
+    >
+        ＋ Folder
+    </button>
+    <button
+        onclick="triggerUpload('')"
+        title="Upload files - zips are auto-extracted"
+    >
+        ⬆ Upload
+    </button>
+    <input
+        type="file"
+        id="uploadInput"
+        multiple
+        style="display:none"
+        onchange="handleUploadInputChange()"
+    >
+    <button
         onclick="saveFile()"
         title="Save current file"
     >
@@ -1048,6 +1080,24 @@
 ========================= -->
 <div id="fileContextMenu">
     <button
+        id="newFileHereBtn"
+        onclick="newFileFromMenu()"
+    >
+        📄 New File
+    </button>
+    <button
+        id="newFolderHereBtn"
+        onclick="newFolderFromMenu()"
+    >
+        📁 New Folder
+    </button>
+    <button
+        id="uploadHereBtn"
+        onclick="uploadFromMenu()"
+    >
+        ⬆ Upload Here
+    </button>
+    <button
         id="renameFileBtn"
         onclick="renameSelectedFile()"
     >
@@ -1067,6 +1117,10 @@
 ===================================================== */
 let currentProject = null;
 let currentFile = null;
+let expandedFolders = new Set();
+let dragPath = null;
+let dragType = null;
+let uploadTargetDir = "";
 const editor = document.getElementById("editor");
 /*
  * CodeMirror gives us syntax highlighting, auto-indent,
@@ -1964,13 +2018,40 @@ function setMobileView(
    FILE CONTEXT MENU (rename / delete)
 ===================================================== */
 const fileContextMenuEl = document.getElementById("fileContextMenu");
+const newFileHereBtn = document.getElementById("newFileHereBtn");
+const newFolderHereBtn = document.getElementById("newFolderHereBtn");
+const uploadHereBtn = document.getElementById("uploadHereBtn");
+const renameFileBtn = document.getElementById("renameFileBtn");
+const deleteFileBtn = document.getElementById("deleteFileBtn");
 let contextMenuPath = null;
+let contextMenuType = null; // 'file' | 'folder' | 'root'
 function showFileContextMenu(
     path,
     x,
-    y
+    y,
+    type
 ) {
     contextMenuPath = path;
+    contextMenuType = type;
+    /*
+     * Root (empty sidebar area): only the "create new"
+     * actions make sense. A file: only rename/delete. A
+     * folder gets everything.
+     */
+    const showCreateActions =
+        type === "folder" || type === "root";
+    const showRenameDelete =
+        type === "file" || type === "folder";
+    newFileHereBtn.style.display =
+        showCreateActions ? "flex" : "none";
+    newFolderHereBtn.style.display =
+        showCreateActions ? "flex" : "none";
+    uploadHereBtn.style.display =
+        showCreateActions ? "flex" : "none";
+    renameFileBtn.style.display =
+        showRenameDelete ? "flex" : "none";
+    deleteFileBtn.style.display =
+        showRenameDelete ? "flex" : "none";
     fileContextMenuEl.classList.add(
         "show"
     );
@@ -2004,6 +2085,7 @@ function hideFileContextMenu() {
         "show"
     );
     contextMenuPath = null;
+    contextMenuType = null;
 }
 /*
  * Close the menu on any click/tap outside it, and on
@@ -2025,8 +2107,42 @@ document.addEventListener(
     hideFileContextMenu,
     true
 );
+/*
+ * Right-clicking (or long-pressing) empty space in the
+ * sidebar - not on a specific file/folder row - opens the
+ * "create new" menu scoped to the project root.
+ */
+document.getElementById("files").addEventListener(
+    "contextmenu",
+    (event) => {
+        if (event.target.closest(".file")) {
+            return;
+        }
+        event.preventDefault();
+        showFileContextMenu("", event.clientX, event.clientY, "root");
+    }
+);
+function newFileFromMenu() {
+    const prefix =
+        contextMenuType === "folder" ? contextMenuPath : "";
+    hideFileContextMenu();
+    newFile(prefix);
+}
+function newFolderFromMenu() {
+    const prefix =
+        contextMenuType === "folder" ? contextMenuPath : "";
+    hideFileContextMenu();
+    newFolder(prefix);
+}
+function uploadFromMenu() {
+    const prefix =
+        contextMenuType === "folder" ? contextMenuPath : "";
+    hideFileContextMenu();
+    triggerUpload(prefix);
+}
 async function renameSelectedFile() {
     const oldPath = contextMenuPath;
+    const type = contextMenuType;
     hideFileContextMenu();
     if (
         !oldPath ||
@@ -2036,7 +2152,7 @@ async function renameSelectedFile() {
     }
     const input =
         prompt(
-            "Rename file:",
+            type === "folder" ? "Rename folder:" : "Rename file:",
             oldPath
         );
     if (
@@ -2074,13 +2190,28 @@ async function renameSelectedFile() {
         );
         /*
          * If the renamed file is the one currently open,
-         * keep the editor pointed at its new name/path.
+         * keep the editor pointed at its new name/path -
+         * and if a whole folder was renamed and the open
+         * file lived inside it, update its prefix too.
          */
         if (
             currentFile === oldPath
         ) {
             currentFile = newPath;
             filename.textContent = newPath;
+        }
+        else if (
+            type === "folder" &&
+            currentFile &&
+            currentFile.startsWith(oldPath + "/")
+        ) {
+            currentFile =
+                newPath + currentFile.slice(oldPath.length);
+            filename.textContent = currentFile;
+        }
+        if (type === "folder") {
+            expandedFolders.delete(oldPath);
+            expandedFolders.add(newPath);
         }
         await loadFiles();
     }
@@ -2092,6 +2223,7 @@ async function renameSelectedFile() {
 }
 async function deleteSelectedFile() {
     const path = contextMenuPath;
+    const type = contextMenuType;
     hideFileContextMenu();
     if (
         !path ||
@@ -2101,8 +2233,11 @@ async function deleteSelectedFile() {
     }
     const confirmed =
         confirm(
-            `Delete "${path}"?\n\n` +
-            "This cannot be undone."
+            type === "folder"
+                ? `Delete folder "${path}" and everything ` +
+                  "inside it?\n\nThis cannot be undone."
+                : `Delete "${path}"?\n\n` +
+                  "This cannot be undone."
         );
     if (
         !confirmed
@@ -2110,10 +2245,12 @@ async function deleteSelectedFile() {
         return;
     }
     try {
+        const endpoint =
+            type === "folder" ? "folder" : "file";
         await api(
             `/api/projects/${encodeURIComponent(
                 currentProject
-            )}/file?path=${encodeURIComponent(
+            )}/${endpoint}?path=${encodeURIComponent(
                 path
             )}`,
             {
@@ -2121,12 +2258,19 @@ async function deleteSelectedFile() {
             }
         );
         /*
-         * If the deleted file was open in the editor,
-         * clear it out so we don't keep editing a file
-         * that no longer exists.
+         * If the deleted file (or a file inside the deleted
+         * folder) was open in the editor, clear it out so we
+         * don't keep editing something that no longer exists.
          */
+        const openFileWasDeleted =
+            currentFile === path ||
+            (
+                type === "folder" &&
+                currentFile &&
+                currentFile.startsWith(path + "/")
+            );
         if (
-            currentFile === path
+            openFileWasDeleted
         ) {
             currentFile = null;
             cm.setValue(
@@ -2136,6 +2280,7 @@ async function deleteSelectedFile() {
             filename.textContent = "No file selected";
             dirtyIndicator.style.display = "none";
         }
+        expandedFolders.delete(path);
         await loadFiles();
     }
     catch (error) {
@@ -2375,7 +2520,7 @@ async function loadFiles() {
         const container = document.getElementById("files");
         container.innerHTML = "";
         if (
-            data.files.length === 0
+            data.tree.length === 0
         ) {
             container.innerHTML =
                 `
@@ -2383,129 +2528,12 @@ async function loadFiles() {
                     No files.
                 </div>
                 `;
-            return;
         }
-        for (
-            const path
-            of data.files
-        ) {
-            const item =
-                document.createElement(
-                    "div"
-                );
-            item.className = "file";
-            if (
-                path === currentFile
-            ) {
-                item.classList.add(
-                    "active"
-                );
-            }
-            const icon =
-                document.createElement(
-                    "span"
-                );
-            icon.className = "file-icon";
-            icon.textContent =
-                path.endsWith(".py")
-                    ? "🐍"
-                    : "📄";
-            const name =
-                document.createElement(
-                    "span"
-                );
-            name.className = "file-name";
-            name.textContent = path;
-            item.appendChild(
-                icon
-            );
-            item.appendChild(
-                name
-            );
-            item.title = path;
-            /*
-             * Left click / tap: open the file. Right click
-             * (desktop) or a long press (touch) instead opens
-             * the rename/delete menu for that file.
-             */
-            let longPressTimer = null;
-            let longPressFired = false;
-            item.oncontextmenu =
-                (event) => {
-                    event.preventDefault();
-                    showFileContextMenu(
-                        path,
-                        event.clientX,
-                        event.clientY
-                    );
-                };
-            item.addEventListener(
-                "pointerdown",
-                (event) => {
-                    if (
-                        event.pointerType !== "touch"
-                    ) {
-                        return;
-                    }
-                    longPressFired = false;
-                    longPressTimer =
-                        setTimeout(
-                            () => {
-                                longPressFired = true;
-                                if (
-                                    navigator.vibrate
-                                ) {
-                                    navigator.vibrate(
-                                        15
-                                    );
-                                }
-                                showFileContextMenu(
-                                    path,
-                                    event.clientX,
-                                    event.clientY
-                                );
-                            },
-                            550
-                        );
-                }
-            );
-            const cancelLongPress =
-                () => {
-                    if (
-                        longPressTimer
-                    ) {
-                        clearTimeout(
-                            longPressTimer
-                        );
-                        longPressTimer = null;
-                    }
-                };
-            item.addEventListener(
-                "pointerup",
-                cancelLongPress
-            );
-            item.addEventListener(
-                "pointermove",
-                cancelLongPress
-            );
-            item.addEventListener(
-                "pointercancel",
-                cancelLongPress
-            );
-            item.onclick =
-                () => {
-                    if (
-                        longPressFired
-                    ) {
-                        longPressFired = false;
-                        return;
-                    }
-                    openFile(
-                        path
-                    );
-                };
-            container.appendChild(
-                item
+        else {
+            renderTree(
+                data.tree,
+                container,
+                0
             );
         }
         /*
@@ -2524,6 +2552,448 @@ async function loadFiles() {
     catch (error) {
         output.textContent =
             "Could not load files:\n" +
+            error.message;
+    }
+}
+/* =====================================================
+   FILE / FOLDER TREE RENDERING
+   Flat DOM, indentation via padding - simpler to manage
+   drag & drop and long-press than a nested-div tree.
+===================================================== */
+function renderTree(
+    nodes,
+    container,
+    depth
+) {
+    for (
+        const node
+        of nodes
+    ) {
+        if (
+            node.type === "folder"
+        ) {
+            container.appendChild(
+                renderFolderRow(
+                    node,
+                    depth
+                )
+            );
+            if (
+                expandedFolders.has(
+                    node.path
+                )
+            ) {
+                renderTree(
+                    node.children,
+                    container,
+                    depth + 1
+                );
+            }
+        }
+        else {
+            container.appendChild(
+                renderFileRow(
+                    node,
+                    depth
+                )
+            );
+        }
+    }
+}
+function attachRowDrag(
+    item,
+    path,
+    type
+) {
+    item.draggable = true;
+    item.addEventListener(
+        "dragstart",
+        (event) => {
+            dragPath = path;
+            dragType = type;
+            item.classList.add(
+                "dragging"
+            );
+            event.dataTransfer.effectAllowed = "move";
+        }
+    );
+    item.addEventListener(
+        "dragend",
+        () => {
+            item.classList.remove(
+                "dragging"
+            );
+            dragPath = null;
+            dragType = null;
+        }
+    );
+}
+/*
+ * Shared right-click / long-press handling for both file
+ * and folder rows.
+ */
+function attachRowContextMenu(
+    item,
+    path,
+    type,
+    onTap
+) {
+    let longPressTimer = null;
+    let longPressFired = false;
+    item.oncontextmenu =
+        (event) => {
+            event.preventDefault();
+            showFileContextMenu(
+                path,
+                event.clientX,
+                event.clientY,
+                type
+            );
+        };
+    item.addEventListener(
+        "pointerdown",
+        (event) => {
+            if (
+                event.pointerType !== "touch"
+            ) {
+                return;
+            }
+            longPressFired = false;
+            longPressTimer =
+                setTimeout(
+                    () => {
+                        longPressFired = true;
+                        if (
+                            navigator.vibrate
+                        ) {
+                            navigator.vibrate(
+                                15
+                            );
+                        }
+                        showFileContextMenu(
+                            path,
+                            event.clientX,
+                            event.clientY,
+                            type
+                        );
+                    },
+                    550
+                );
+        }
+    );
+    const cancelLongPress =
+        () => {
+            if (
+                longPressTimer
+            ) {
+                clearTimeout(
+                    longPressTimer
+                );
+                longPressTimer = null;
+            }
+        };
+    item.addEventListener(
+        "pointerup",
+        cancelLongPress
+    );
+    item.addEventListener(
+        "pointermove",
+        cancelLongPress
+    );
+    item.addEventListener(
+        "pointercancel",
+        cancelLongPress
+    );
+    item.onclick =
+        () => {
+            if (
+                longPressFired
+            ) {
+                longPressFired = false;
+                return;
+            }
+            onTap();
+        };
+}
+function renderFileRow(
+    node,
+    depth
+) {
+    const item =
+        document.createElement(
+            "div"
+        );
+    item.className = "file";
+    if (
+        node.path === currentFile
+    ) {
+        item.classList.add(
+            "active"
+        );
+    }
+    item.style.paddingLeft =
+        (depth * 16 + 8) + "px";
+    const icon =
+        document.createElement(
+            "span"
+        );
+    icon.className = "file-icon";
+    icon.textContent =
+        node.name.endsWith(".py")
+            ? "🐍"
+            : "📄";
+    const name =
+        document.createElement(
+            "span"
+        );
+    name.className = "file-name";
+    name.textContent = node.name;
+    item.appendChild(
+        icon
+    );
+    item.appendChild(
+        name
+    );
+    item.title = node.path;
+    attachRowDrag(
+        item,
+        node.path,
+        "file"
+    );
+    attachRowContextMenu(
+        item,
+        node.path,
+        "file",
+        () => openFile(node.path)
+    );
+    return item;
+}
+function renderFolderRow(
+    node,
+    depth
+) {
+    const item =
+        document.createElement(
+            "div"
+        );
+    item.className = "file";
+    item.style.paddingLeft =
+        (depth * 16 + 8) + "px";
+    const isOpen =
+        expandedFolders.has(
+            node.path
+        );
+    const arrow =
+        document.createElement(
+            "span"
+        );
+    arrow.className = "folder-arrow";
+    arrow.textContent =
+        isOpen ? "▾" : "▸";
+    const icon =
+        document.createElement(
+            "span"
+        );
+    icon.className = "file-icon";
+    icon.textContent =
+        isOpen ? "📂" : "📁";
+    const name =
+        document.createElement(
+            "span"
+        );
+    name.className = "file-name";
+    name.textContent = node.name;
+    item.appendChild(
+        arrow
+    );
+    item.appendChild(
+        icon
+    );
+    item.appendChild(
+        name
+    );
+    item.title = node.path;
+    attachRowDrag(
+        item,
+        node.path,
+        "folder"
+    );
+    attachRowContextMenu(
+        item,
+        node.path,
+        "folder",
+        () => {
+            if (
+                expandedFolders.has(
+                    node.path
+                )
+            ) {
+                expandedFolders.delete(
+                    node.path
+                );
+            }
+            else {
+                expandedFolders.add(
+                    node.path
+                );
+            }
+            loadFiles();
+        }
+    );
+    /*
+     * Drop target: dropping a dragged file/folder here
+     * moves it into this folder.
+     */
+    item.addEventListener(
+        "dragover",
+        (event) => {
+            if (!dragPath) {
+                return;
+            }
+            event.preventDefault();
+            item.classList.add(
+                "drop-target"
+            );
+        }
+    );
+    item.addEventListener(
+        "dragleave",
+        () => {
+            item.classList.remove(
+                "drop-target"
+            );
+        }
+    );
+    item.addEventListener(
+        "drop",
+        (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            item.classList.remove(
+                "drop-target"
+            );
+            moveEntry(
+                dragPath,
+                dragType,
+                node.path
+            );
+        }
+    );
+    return item;
+}
+/*
+ * Dropping on empty sidebar space (not on any row) moves
+ * the dragged item to the project root.
+ */
+(function setUpRootDropZone() {
+    const container =
+        document.getElementById(
+            "files"
+        );
+    container.addEventListener(
+        "dragover",
+        (event) => {
+            if (
+                !dragPath ||
+                event.target.closest(".file")
+            ) {
+                return;
+            }
+            event.preventDefault();
+        }
+    );
+    container.addEventListener(
+        "drop",
+        (event) => {
+            if (
+                !dragPath ||
+                event.target.closest(".file")
+            ) {
+                return;
+            }
+            event.preventDefault();
+            moveEntry(
+                dragPath,
+                dragType,
+                ""
+            );
+        }
+    );
+})();
+async function moveEntry(
+    oldPath,
+    type,
+    newParentFolder
+) {
+    if (!oldPath || !currentProject) {
+        return;
+    }
+    const baseName =
+        oldPath.split("/").pop();
+    const newPath =
+        newParentFolder
+            ? `${newParentFolder}/${baseName}`
+            : baseName;
+    if (
+        newPath === oldPath
+    ) {
+        return;
+    }
+    /*
+     * Guard against dropping a folder into itself or one
+     * of its own descendants.
+     */
+    if (
+        type === "folder" &&
+        (
+            newParentFolder === oldPath ||
+            newParentFolder.startsWith(oldPath + "/")
+        )
+    ) {
+        return;
+    }
+    try {
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/file/rename`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body:
+                    JSON.stringify({
+                        old_path: oldPath,
+                        new_path: newPath
+                    })
+            }
+        );
+        if (
+            currentFile === oldPath
+        ) {
+            currentFile = newPath;
+            filename.textContent = newPath;
+        }
+        else if (
+            type === "folder" &&
+            currentFile &&
+            currentFile.startsWith(oldPath + "/")
+        ) {
+            currentFile =
+                newPath + currentFile.slice(oldPath.length);
+            filename.textContent = currentFile;
+        }
+        if (type === "folder") {
+            expandedFolders.delete(oldPath);
+            expandedFolders.add(newPath);
+        }
+        await loadFiles();
+    }
+    catch (error) {
+        output.textContent =
+            "Move failed:\n" +
             error.message;
     }
 }
@@ -2643,17 +3113,19 @@ async function saveFile() {
 /* =====================================================
    NEW FILE
 ===================================================== */
-async function newFile() {
+async function newFile(prefix) {
     if (!currentProject) {
         alert(
             "Create a project first."
         );
         return;
     }
+    const suggestion =
+        prefix ? `${prefix}/test.py` : "test.py";
     const path =
         prompt(
             "File path:",
-            "test.py"
+            suggestion
         );
     if (
         path === null
@@ -2685,6 +3157,9 @@ async function newFile() {
                     })
             }
         );
+        if (prefix) {
+            expandedFolders.add(prefix);
+        }
         await loadFiles();
         await openFile(
             cleanPath
@@ -2698,6 +3173,152 @@ async function newFile() {
             "Could not create file:\n" +
             error.message
         );
+    }
+}
+/* =====================================================
+   NEW FOLDER
+===================================================== */
+async function newFolder(prefix) {
+    if (!currentProject) {
+        alert(
+            "Create a project first."
+        );
+        return;
+    }
+    const suggestion =
+        prefix ? `${prefix}/new-folder` : "new-folder";
+    const path =
+        prompt(
+            "Folder path:",
+            suggestion
+        );
+    if (
+        path === null
+    ) {
+        return;
+    }
+    const cleanPath =
+        path.trim();
+    if (!cleanPath) {
+        return;
+    }
+    try {
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/folder`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body:
+                    JSON.stringify({
+                        path: cleanPath
+                    })
+            }
+        );
+        if (prefix) {
+            expandedFolders.add(prefix);
+        }
+        expandedFolders.add(cleanPath);
+        await loadFiles();
+        output.textContent =
+            "Created folder:\n" +
+            cleanPath;
+    }
+    catch (error) {
+        alert(
+            "Could not create folder:\n" +
+            error.message
+        );
+    }
+}
+/* =====================================================
+   UPLOAD (files and zips - zips auto-extract)
+===================================================== */
+function triggerUpload(targetDir) {
+    if (!currentProject) {
+        alert(
+            "Create a project first."
+        );
+        return;
+    }
+    uploadTargetDir = targetDir || "";
+    document.getElementById(
+        "uploadInput"
+    ).click();
+}
+async function handleUploadInputChange() {
+    const input =
+        document.getElementById(
+            "uploadInput"
+        );
+    const files = input.files;
+    if (
+        !files ||
+        files.length === 0 ||
+        !currentProject
+    ) {
+        return;
+    }
+    const formData = new FormData();
+    for (
+        const file
+        of files
+    ) {
+        formData.append(
+            "files",
+            file,
+            file.name
+        );
+    }
+    formData.append(
+        "target_dir",
+        uploadTargetDir
+    );
+    output.textContent =
+        "Uploading " +
+        files.length +
+        " item(s)...";
+    try {
+        const data =
+            await api(
+                `/api/projects/${encodeURIComponent(
+                    currentProject
+                )}/upload`,
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+        if (uploadTargetDir) {
+            expandedFolders.add(
+                uploadTargetDir
+            );
+        }
+        await loadFiles();
+        let summary =
+            "Uploaded:\n" +
+            data.saved.join("\n");
+        if (
+            data.skipped &&
+            data.skipped.length > 0
+        ) {
+            summary +=
+                "\n\nSkipped (invalid or too large):\n" +
+                data.skipped.join("\n");
+        }
+        output.textContent = summary;
+    }
+    catch (error) {
+        output.textContent =
+            "Upload failed:\n" +
+            error.message;
+    }
+    finally {
+        input.value = "";
     }
 }
 /* =====================================================
