@@ -1,10 +1,14 @@
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import (
+    FastAPI, Request, WebSocket,
+    UploadFile, File, Form
+)
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio
+import base64
 import importlib.util
 import json
 import os
@@ -15,6 +19,7 @@ import sys
 import tempfile
 import uuid
 import shutil
+import zipfile
 
 # Postgres-backed persistence (see the "PERSISTENCE" section below).
 # Optional import so the app still starts locally even if this
@@ -160,9 +165,35 @@ async def db_init_pool():
                     projects(id) ON DELETE CASCADE,
                 path TEXT NOT NULL,
                 content TEXT NOT NULL,
+                is_binary BOOLEAN NOT NULL DEFAULT false,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (project_id, path)
             );
+            """
+        )
+
+        # Explicit folder tracking. Folders that contain files are
+        # already implied by project_files.path, but an *empty*
+        # folder has no file to imply it, so it needs its own row
+        # or it would vanish on restart / resync.
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_folders (
+                project_id TEXT NOT NULL REFERENCES
+                    projects(id) ON DELETE CASCADE,
+                path TEXT NOT NULL,
+                PRIMARY KEY (project_id, path)
+            );
+            """
+        )
+
+        # Upgrading an existing deployment that predates binary
+        # file support - add the column if it isn't there yet.
+        await conn.execute(
+            """
+            ALTER TABLE project_files
+            ADD COLUMN IF NOT EXISTS is_binary
+                BOOLEAN NOT NULL DEFAULT false;
             """
         )
 
@@ -189,9 +220,30 @@ async def db_restore_projects_to_disk():
 
             folder.mkdir(parents=True, exist_ok=True)
 
-            files = await conn.fetch(
-                "SELECT path, content FROM project_files "
+            # Folders first (so empty ones exist even if no file
+            # ever gets written into them), then files.
+            folder_rows = await conn.fetch(
+                "SELECT path FROM project_folders "
                 "WHERE project_id = $1",
+                project_id
+            )
+
+            for folder_row in folder_rows:
+
+                try:
+                    relative = safe_relative_path(
+                        folder_row["path"]
+                    )
+                except ValueError:
+                    continue
+
+                (folder / relative).mkdir(
+                    parents=True, exist_ok=True
+                )
+
+            files = await conn.fetch(
+                "SELECT path, content, is_binary "
+                "FROM project_files WHERE project_id = $1",
                 project_id
             )
 
@@ -206,9 +258,15 @@ async def db_restore_projects_to_disk():
 
                 target = folder / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(
-                    file_row["content"], encoding="utf-8"
-                )
+
+                if file_row["is_binary"]:
+                    target.write_bytes(
+                        base64.b64decode(file_row["content"])
+                    )
+                else:
+                    target.write_text(
+                        file_row["content"], encoding="utf-8"
+                    )
 
     print(
         f"Restored {len(projects)} project(s) from the database."
@@ -232,7 +290,16 @@ async def db_save_project(project_id: str, name: str):
         )
 
 
-async def db_save_file(project_id: str, path: str, content: str):
+async def db_save_file(
+    project_id: str,
+    path: str,
+    content: str,
+    is_binary: bool = False
+):
+    """
+    content is the file's text for text files, or base64-encoded
+    bytes for binary files (is_binary=True).
+    """
 
     if db_pool is None:
         return
@@ -242,15 +309,29 @@ async def db_save_file(project_id: str, path: str, content: str):
         await conn.execute(
             """
             INSERT INTO project_files
-                (project_id, path, content, updated_at)
-            VALUES ($1, $2, $3, now())
+                (project_id, path, content, is_binary, updated_at)
+            VALUES ($1, $2, $3, $4, now())
             ON CONFLICT (project_id, path)
             DO UPDATE SET
                 content = EXCLUDED.content,
+                is_binary = EXCLUDED.is_binary,
                 updated_at = now()
             """,
-            project_id, path, content
+            project_id, path, content, is_binary
         )
+
+        # Saving a file implies every ancestor folder exists -
+        # drop any explicit (now-redundant) folder row for them,
+        # matching what db_full_resync would settle on anyway.
+        parents = list(Path(path).parents)[:-1]
+
+        if parents:
+            await conn.execute(
+                "DELETE FROM project_folders "
+                "WHERE project_id = $1 AND path = ANY($2::text[])",
+                project_id,
+                [p.as_posix() for p in parents]
+            )
 
 
 async def db_delete_file(project_id: str, path: str):
@@ -265,6 +346,105 @@ async def db_delete_file(project_id: str, path: str):
             "WHERE project_id = $1 AND path = $2",
             project_id, path
         )
+
+
+async def db_save_folder(project_id: str, path: str):
+
+    if db_pool is None:
+        return
+
+    async with db_pool.acquire() as conn:
+
+        await conn.execute(
+            """
+            INSERT INTO project_folders (project_id, path)
+            VALUES ($1, $2)
+            ON CONFLICT (project_id, path) DO NOTHING
+            """,
+            project_id, path
+        )
+
+
+async def db_delete_folder(project_id: str, path: str):
+    """Deletes a folder and everything nested under it."""
+
+    if db_pool is None:
+        return
+
+    prefix = path.rstrip("/") + "/"
+
+    async with db_pool.acquire() as conn:
+
+        async with conn.transaction():
+
+            await conn.execute(
+                "DELETE FROM project_files "
+                "WHERE project_id = $1 "
+                "AND (path = $2 OR path LIKE $3)",
+                project_id, path, prefix + "%"
+            )
+
+            await conn.execute(
+                "DELETE FROM project_folders "
+                "WHERE project_id = $1 "
+                "AND (path = $2 OR path LIKE $3)",
+                project_id, path, prefix + "%"
+            )
+
+
+async def db_move_prefix(
+    project_id: str, old_path: str, new_path: str
+):
+    """
+    Renames/moves a folder: updates every file and folder row
+    whose path is old_path, or starts with old_path + "/", to
+    start with new_path instead.
+    """
+
+    if db_pool is None:
+        return
+
+    old_prefix = old_path.rstrip("/") + "/"
+
+    async with db_pool.acquire() as conn:
+
+        rows = await conn.fetch(
+            "SELECT path FROM project_files "
+            "WHERE project_id = $1 "
+            "AND (path = $2 OR path LIKE $3)",
+            project_id, old_path, old_prefix + "%"
+        )
+
+        folder_rows = await conn.fetch(
+            "SELECT path FROM project_folders "
+            "WHERE project_id = $1 "
+            "AND (path = $2 OR path LIKE $3)",
+            project_id, old_path, old_prefix + "%"
+        )
+
+        async with conn.transaction():
+
+            for row in rows:
+
+                old = row["path"]
+                new = new_path + old[len(old_path):]
+
+                await conn.execute(
+                    "UPDATE project_files SET path = $3 "
+                    "WHERE project_id = $1 AND path = $2",
+                    project_id, old, new
+                )
+
+            for row in folder_rows:
+
+                old = row["path"]
+                new = new_path + old[len(old_path):]
+
+                await conn.execute(
+                    "UPDATE project_folders SET path = $3 "
+                    "WHERE project_id = $1 AND path = $2",
+                    project_id, old, new
+                )
 
 
 def _should_sync_path(relative_parts) -> bool:
@@ -296,15 +476,20 @@ async def db_full_resync(project_id: str):
         return
 
     disk_files = {}
+    disk_dirs = set()
 
     for path in folder.rglob("*"):
-
-        if not path.is_file():
-            continue
 
         relative = path.relative_to(folder)
 
         if not _should_sync_path(relative.parts):
+            continue
+
+        if path.is_dir():
+            disk_dirs.add(relative.as_posix())
+            continue
+
+        if not path.is_file():
             continue
 
         try:
@@ -312,12 +497,29 @@ async def db_full_resync(project_id: str):
             if path.stat().st_size > _SYNC_MAX_FILE_BYTES:
                 continue
 
-            content = path.read_text(encoding="utf-8")
+            try:
+                content = path.read_text(encoding="utf-8")
+                is_binary = False
+            except UnicodeDecodeError:
+                content = base64.b64encode(
+                    path.read_bytes()
+                ).decode("ascii")
+                is_binary = True
 
-        except (OSError, UnicodeDecodeError):
+        except OSError:
             continue
 
-        disk_files[relative.as_posix()] = content
+        disk_files[relative.as_posix()] = (content, is_binary)
+
+    # Folders implied by a file's own path don't need an explicit
+    # row - only genuinely empty ones do.
+    implied_dirs = set()
+    for file_path in disk_files:
+        for parent in Path(file_path).parents:
+            if parent != Path("."):
+                implied_dirs.add(parent.as_posix())
+
+    empty_disk_dirs = disk_dirs - implied_dirs
 
     async with db_pool.acquire() as conn:
 
@@ -327,11 +529,18 @@ async def db_full_resync(project_id: str):
         )
         db_paths = {row["path"] for row in db_rows}
 
-        to_delete = db_paths - set(disk_files.keys())
+        db_folder_rows = await conn.fetch(
+            "SELECT path FROM project_folders WHERE project_id = $1",
+            project_id
+        )
+        db_folder_paths = {row["path"] for row in db_folder_rows}
+
+        files_to_delete = db_paths - set(disk_files.keys())
+        folders_to_delete = db_folder_paths - empty_disk_dirs
 
         async with conn.transaction():
 
-            for path in to_delete:
+            for path in files_to_delete:
 
                 await conn.execute(
                     "DELETE FROM project_files "
@@ -339,19 +548,40 @@ async def db_full_resync(project_id: str):
                     project_id, path
                 )
 
-            for path, content in disk_files.items():
+            for path, (content, is_binary) in disk_files.items():
 
                 await conn.execute(
                     """
                     INSERT INTO project_files
-                        (project_id, path, content, updated_at)
-                    VALUES ($1, $2, $3, now())
+                        (project_id, path, content, is_binary,
+                         updated_at)
+                    VALUES ($1, $2, $3, $4, now())
                     ON CONFLICT (project_id, path)
                     DO UPDATE SET
                         content = EXCLUDED.content,
+                        is_binary = EXCLUDED.is_binary,
                         updated_at = now()
                     """,
-                    project_id, path, content
+                    project_id, path, content, is_binary
+                )
+
+            for path in folders_to_delete:
+
+                await conn.execute(
+                    "DELETE FROM project_folders "
+                    "WHERE project_id = $1 AND path = $2",
+                    project_id, path
+                )
+
+            for path in empty_disk_dirs:
+
+                await conn.execute(
+                    """
+                    INSERT INTO project_folders (project_id, path)
+                    VALUES ($1, $2)
+                    ON CONFLICT (project_id, path) DO NOTHING
+                    """,
+                    project_id, path
                 )
 
 
@@ -446,6 +676,73 @@ def safe_relative_path(path: str) -> Path:
         )
 
     return relative
+
+
+def build_file_tree(folder: Path):
+    """
+    Builds a nested VS Code-style tree: folders before files at
+    each level, both alphabetical. Empty folders are included
+    (rglob would otherwise silently drop them).
+    """
+
+    root = {}
+
+    def get_node(parts):
+        node = root
+        for part in parts:
+            node = node.setdefault(part, {"__children__": {}})
+            node = node["__children__"]
+        return node
+
+    for path in sorted(folder.rglob("*")):
+
+        relative = path.relative_to(folder)
+
+        if not _should_sync_path(relative.parts):
+            continue
+
+        parent_node = get_node(relative.parts[:-1])
+
+        if path.is_dir():
+            parent_node.setdefault(
+                relative.parts[-1], {"__children__": {}}
+            )
+        elif path.is_file():
+            parent_node[relative.parts[-1]] = {
+                "__file__": True
+            }
+
+    def to_list(node, prefix=""):
+
+        folders = []
+        files = []
+
+        for name, value in node.items():
+
+            path = f"{prefix}{name}"
+
+            if value.get("__file__"):
+                files.append({
+                    "name": name,
+                    "path": path,
+                    "type": "file"
+                })
+            else:
+                folders.append({
+                    "name": name,
+                    "path": path,
+                    "type": "folder",
+                    "children": to_list(
+                        value["__children__"], path + "/"
+                    )
+                })
+
+        folders.sort(key=lambda n: n["name"].lower())
+        files.sort(key=lambda n: n["name"].lower())
+
+        return folders + files
+
+    return to_list(root)
 
 
 def list_files(folder: Path):
@@ -609,7 +906,9 @@ async def get_files(
 
     return {
         "files":
-        list_files(folder)
+        list_files(folder),
+        "tree":
+        build_file_tree(folder)
     }
 
 
@@ -862,6 +1161,295 @@ async def delete_file(
 
 
 # =========================================================
+# FOLDERS
+# =========================================================
+
+@app.post(
+    "/api/projects/{project_id}/folder"
+)
+async def create_folder(
+    project_id: str,
+    request: Request
+):
+
+    data = await request.json()
+
+    path = str(
+        data.get("path", "")
+    ).strip()
+
+    if not path:
+
+        return JSONResponse(
+            {"error": "Path is required"},
+            status_code=400
+        )
+
+    try:
+
+        folder = project_path(project_id)
+        relative = safe_relative_path(path)
+        target = folder / relative
+
+    except ValueError:
+
+        return JSONResponse(
+            {"error": "Invalid path"},
+            status_code=400
+        )
+
+    if target.exists():
+
+        return JSONResponse(
+            {
+                "error":
+                "A file or folder already exists at that path"
+            },
+            status_code=409
+        )
+
+    target.mkdir(parents=True)
+
+    await db_save_folder(project_id, relative.as_posix())
+
+    return {
+        "ok": True,
+        "path": relative.as_posix()
+    }
+
+
+@app.delete(
+    "/api/projects/{project_id}/folder"
+)
+async def delete_folder(
+    project_id: str,
+    path: str
+):
+
+    try:
+
+        folder = project_path(project_id)
+        relative = safe_relative_path(path)
+        target = folder / relative
+
+    except ValueError:
+
+        return JSONResponse(
+            {"error": "Invalid path"},
+            status_code=400
+        )
+
+    if not target.is_dir():
+
+        return JSONResponse(
+            {"error": "Folder not found"},
+            status_code=404
+        )
+
+    shutil.rmtree(target)
+
+    await db_delete_folder(project_id, relative.as_posix())
+
+    return {
+        "ok": True
+    }
+
+
+# =========================================================
+# UPLOAD FILES (binary-safe)
+# =========================================================
+
+@app.post(
+    "/api/projects/{project_id}/upload"
+)
+async def upload_files(
+    project_id: str,
+    target_dir: str = Form(""),
+    files: list[UploadFile] = File(...)
+):
+
+    try:
+
+        folder = project_path(project_id)
+
+        target_folder = folder
+
+        if target_dir.strip():
+            target_folder = (
+                folder / safe_relative_path(target_dir.strip())
+            )
+
+    except ValueError:
+
+        return JSONResponse(
+            {"error": "Invalid path"},
+            status_code=400
+        )
+
+    if not folder.is_dir():
+
+        return JSONResponse(
+            {"error": "Project not found"},
+            status_code=404
+        )
+
+    saved = []
+    skipped = []
+
+    for upload in files:
+
+        raw_name = upload.filename or ""
+
+        # Browsers can send a webkitRelativePath-style name for
+        # folder uploads (e.g. "assets/logo.png") - keep that
+        # nested structure if so, otherwise it's just a filename.
+        try:
+            relative = safe_relative_path(raw_name)
+        except ValueError:
+            skipped.append(raw_name)
+            continue
+
+        content_bytes = await upload.read()
+
+        if len(content_bytes) > 5_000_000:
+            skipped.append(raw_name)
+            continue
+
+        if raw_name.lower().endswith(".zip"):
+
+            extracted = extract_zip_bytes(
+                content_bytes, target_folder, folder
+            )
+
+            for extracted_file in extracted["files"]:
+                await db_save_file(
+                    project_id,
+                    extracted_file["path"],
+                    extracted_file["content"],
+                    extracted_file["is_binary"]
+                )
+
+            for extracted_folder in extracted["folders"]:
+                await db_save_folder(
+                    project_id, extracted_folder
+                )
+
+            saved.extend(
+                p["path"] for p in extracted["files"]
+            )
+
+            continue
+
+        target = target_folder / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        target.write_bytes(content_bytes)
+
+        db_relative = target.relative_to(folder).as_posix()
+
+        try:
+            text_content = content_bytes.decode("utf-8")
+            await db_save_file(
+                project_id, db_relative, text_content, False
+            )
+        except UnicodeDecodeError:
+            await db_save_file(
+                project_id,
+                db_relative,
+                base64.b64encode(content_bytes).decode("ascii"),
+                True
+            )
+
+        saved.append(db_relative)
+
+    return {
+        "ok": True,
+        "saved": saved,
+        "skipped": skipped
+    }
+
+
+def extract_zip_bytes(
+    zip_bytes: bytes, target_folder: Path, project_root: Path
+):
+    """
+    Extracts a zip's contents into target_folder, guarding against
+    zip-slip (entries whose name escapes the target folder via
+    ".." or an absolute path). Returns the files/folders written,
+    with paths relative to project_root, for the caller to mirror
+    into the database.
+    """
+
+    import io
+
+    written_files = []
+    written_folders = []
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+
+        for entry in archive.infolist():
+
+            try:
+                relative = safe_relative_path(entry.filename)
+            except ValueError:
+                continue
+
+            destination = target_folder / relative
+
+            # Belt-and-suspenders on top of safe_relative_path:
+            # confirm the resolved path really is inside the
+            # project root before writing anything.
+            try:
+                destination.resolve().relative_to(
+                    project_root.resolve()
+                )
+            except ValueError:
+                continue
+
+            if entry.is_dir():
+                destination.mkdir(parents=True, exist_ok=True)
+                written_folders.append(
+                    destination.relative_to(
+                        project_root
+                    ).as_posix()
+                )
+                continue
+
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+            data = archive.read(entry)
+
+            if len(data) > 5_000_000:
+                continue
+
+            destination.write_bytes(data)
+
+            db_relative = destination.relative_to(
+                project_root
+            ).as_posix()
+
+            try:
+                text_content = data.decode("utf-8")
+                written_files.append({
+                    "path": db_relative,
+                    "content": text_content,
+                    "is_binary": False
+                })
+            except UnicodeDecodeError:
+                written_files.append({
+                    "path": db_relative,
+                    "content":
+                        base64.b64encode(data).decode("ascii"),
+                    "is_binary": True
+                })
+
+    return {
+        "files": written_files,
+        "folders": written_folders
+    }
+
+
+# =========================================================
 # RENAME / MOVE FILE
 # =========================================================
 
@@ -954,12 +1542,12 @@ async def rename_file(
         )
 
 
-    if not source.is_file():
+    if not source.exists():
 
         return JSONResponse(
             {
                 "error":
-                "File not found"
+                "File or folder not found"
             },
             status_code=404
         )
@@ -970,7 +1558,7 @@ async def rename_file(
         return JSONResponse(
             {
                 "error":
-                "A file already exists at that path"
+                "Something already exists at that path"
             },
             status_code=409
         )
@@ -981,29 +1569,43 @@ async def rename_file(
         exist_ok=True
     )
 
+    is_folder = source.is_dir()
 
     source.rename(
         destination
     )
 
-    try:
-        moved_content = destination.read_text(
-            encoding="utf-8"
+    if is_folder:
+
+        await db_move_prefix(
+            project_id,
+            old_relative.as_posix(),
+            new_relative.as_posix()
         )
 
-    except UnicodeDecodeError:
-        moved_content = None
+    else:
 
-    if moved_content is not None:
+        try:
+            moved_content = destination.read_text(
+                encoding="utf-8"
+            )
+            is_binary = False
+        except UnicodeDecodeError:
+            moved_content = base64.b64encode(
+                destination.read_bytes()
+            ).decode("ascii")
+            is_binary = True
+
         await db_save_file(
             project_id,
             new_relative.as_posix(),
-            moved_content
+            moved_content,
+            is_binary
         )
 
-    await db_delete_file(
-        project_id, old_relative.as_posix()
-    )
+        await db_delete_file(
+            project_id, old_relative.as_posix()
+        )
 
 
     return {
