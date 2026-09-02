@@ -2391,11 +2391,48 @@ async function api(
     url,
     options = {}
 ) {
-    const response =
-        await fetch(
-            url,
-            options
+    /*
+     * Without this, a server that's slow to wake up (or just
+     * never responds) leaves fetch() hanging forever with no
+     * error and no feedback - the UI just sits frozen with no
+     * sign anything is wrong. 20s is generous enough for a
+     * cold-starting free-tier server, but still finite.
+     */
+    const controller = new AbortController();
+    const timeoutId =
+        setTimeout(
+            () => controller.abort(),
+            20000
         );
+    let response;
+    try {
+        response =
+            await fetch(
+                url,
+                {
+                    ...options,
+                    signal: controller.signal
+                }
+            );
+    }
+    catch (error) {
+        if (error.name === "AbortError") {
+            throw new Error(
+                "The server took too long to respond " +
+                "(20s+). It may still be starting up - " +
+                "try again in a moment."
+            );
+        }
+        throw new Error(
+            "Could not reach the server. Check your " +
+            "connection and try again."
+        );
+    }
+    finally {
+        clearTimeout(
+            timeoutId
+        );
+    }
     let data;
     try {
         data =
@@ -2458,9 +2495,44 @@ async function loadProjects() {
         await loadFiles();
     }
     catch (error) {
+        /*
+         * This is the very first thing the app does, and the
+         * sidebar (with its "Loading..." placeholder) is what
+         * the user is actually looking at - not the Output
+         * panel, which is hidden by default on mobile. Show
+         * the error (and a retry button) right there instead
+         * of somewhere the user may never see.
+         */
         output.textContent =
             "Startup error:\n" +
             error.message;
+        const container =
+            document.getElementById(
+                "files"
+            );
+        container.innerHTML = "";
+        const errorBox =
+            document.createElement(
+                "div"
+            );
+        errorBox.className = "empty-files";
+        errorBox.style.color = "#f85149";
+        errorBox.textContent =
+            "⚠ " + error.message;
+        const retryBtn =
+            document.createElement(
+                "button"
+            );
+        retryBtn.textContent = "↻ Retry";
+        retryBtn.style.marginTop = "8px";
+        retryBtn.style.width = "100%";
+        retryBtn.onclick = loadProjects;
+        container.appendChild(
+            errorBox
+        );
+        container.appendChild(
+            retryBtn
+        );
     }
 }
 /* =====================================================
@@ -2648,6 +2720,33 @@ async function loadFiles() {
         output.textContent =
             "Could not load files:\n" +
             error.message;
+        const container =
+            document.getElementById(
+                "files"
+            );
+        container.innerHTML = "";
+        const errorBox =
+            document.createElement(
+                "div"
+            );
+        errorBox.className = "empty-files";
+        errorBox.style.color = "#f85149";
+        errorBox.textContent =
+            "⚠ " + error.message;
+        const retryBtn =
+            document.createElement(
+                "button"
+            );
+        retryBtn.textContent = "↻ Retry";
+        retryBtn.style.marginTop = "8px";
+        retryBtn.style.width = "100%";
+        retryBtn.onclick = loadFiles;
+        container.appendChild(
+            errorBox
+        );
+        container.appendChild(
+            retryBtn
+        );
     }
 }
 /* =====================================================
@@ -3625,93 +3724,4 @@ async function startCamera() {
             cameraFpsEl.textContent =
                 cameraFpsCount + " fps";
             cameraFpsCount = 0;
-        }, 1000);
-        startCameraCaptureLoop();
-        loadFiles();
-    };
-    cameraSocket.onmessage = (event) => {
-        cameraFramesInFlight = Math.max(
-            0, cameraFramesInFlight - 1
-        );
-        cameraFpsCount++;
-        const blob = new Blob(
-            [event.data], { type: "image/jpeg" }
-        );
-        createImageBitmap(blob).then((bitmap) => {
-            cameraDisplayCanvas.width = bitmap.width;
-            cameraDisplayCanvas.height = bitmap.height;
-            cameraDisplayCanvas
-                .getContext("2d")
-                .drawImage(bitmap, 0, 0);
-            bitmap.close();
-        }).catch(() => {});
-    };
-    cameraSocket.onerror = () => {
-        setCameraStatus("error", "Connection error");
-    };
-    cameraSocket.onclose = () => {
-        stopCamera(
-            cameraRunning ? "Connection closed" : null
-        );
-    };
-}
-function startCameraCaptureLoop() {
-    const ctx = cameraCaptureCanvas.getContext("2d");
-    /*
-     * Low-data middle ground: bigger/clearer than the
-     * ultra-low-data settings but still slow and compressed,
-     * targeting roughly 30-40 KB/s instead of ~10-15 KB/s
-     * (blurrier) or ~150-300 KB/s (full quality). There's no
-     * way around this trade with per-frame JPEGs; a real
-     * video codec would need WebRTC instead.
-     */
-    const MAX_W = 240;
-    /*
-     * Drawing through a grayscale filter before compressing
-     * shrinks the *uploaded* JPEG too (not just the one coming
-     * back), since a real color photo has genuine per-pixel
-     * color detail that costs real bytes - stripping it before
-     * encoding, not after, is what actually saves that data.
-     */
-    const supportsFilter = "filter" in ctx;
-    clearInterval(cameraCaptureTimer);
-    cameraCaptureTimer = setInterval(() => {
-        if (
-            !cameraRunning ||
-            !cameraSocket ||
-            cameraSocket.readyState !== WebSocket.OPEN
-        ) {
-            return;
-        }
-        const vw = cameraVideoEl.videoWidth;
-        const vh = cameraVideoEl.videoHeight;
-        if (!vw || !vh) {
-            return;
-        }
-        /*
-         * Strict one-frame-at-a-time: don't capture the next
-         * frame until the previous one's result has come back.
-         * This is what actually enforces the slow, low-data
-         * rate, rather than relying on the interval alone.
-         */
-        if (cameraFramesInFlight >= 1) {
-            return;
-        }
-        const scale = Math.min(1, MAX_W / vw);
-        const w = Math.round(vw * scale);
-        const h = Math.round(vh * scale);
-        cameraCaptureCanvas.width = w;
-        cameraCaptureCanvas.height = h;
-        if (supportsFilter) {
-            ctx.filter = "grayscale(1)";
-        }
-        ctx.drawImage(cameraVideoEl, 0, 0, w, h);
-        if (supportsFilter) {
-            ctx.filter = "none";
-        }
-        cameraCaptureCanvas.toBlob(
-            (blob) => {
-                if (
-                    blob &&
-                    cameraSocket &&
-     
+        
