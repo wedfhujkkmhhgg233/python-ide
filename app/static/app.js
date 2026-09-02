@@ -1681,6 +1681,12 @@ function attachRowDrag(
     item.addEventListener(
         "dragstart",
         (event) => {
+            if (
+                event.target.closest(".file-menu-btn")
+            ) {
+                event.preventDefault();
+                return;
+            }
             dragPath = path;
             dragType = type;
             item.classList.add(
@@ -1824,6 +1830,55 @@ function attachRowContextMenu(
         }
     );
 }
+/*
+ * A dedicated "..." button on every row that opens the same
+ * context menu as right-click/long-press. This exists
+ * because the row itself is `draggable`, and on some
+ * devices/browsers a press-and-move on a draggable element
+ * gets captured as a drag before it's recognized as a tap -
+ * which made rename/delete hard to reach by tapping the row
+ * itself. This button is explicitly NOT draggable, and stops
+ * the click from reaching the row (so it never opens the
+ * file or starts a drag).
+ */
+function createRowMenuButton(path, type) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "file-menu-btn";
+    btn.draggable = false;
+    btn.title = "More actions";
+    btn.setAttribute(
+        "aria-label",
+        "More actions for " + path
+    );
+    btn.innerHTML =
+        '<svg class="icon"><use href="#i-more-vertical"></use></svg>';
+    const openMenu = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = btn.getBoundingClientRect();
+        showFileContextMenu(
+            path,
+            rect.left,
+            rect.bottom,
+            type
+        );
+    };
+    btn.addEventListener("pointerdown", (event) => {
+        /*
+         * Stops the row's own drag/long-press handling from
+         * ever seeing this press.
+         */
+        event.stopPropagation();
+    });
+    btn.addEventListener("click", openMenu);
+    btn.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+            openMenu(event);
+        }
+    });
+    return btn;
+}
 function renderFileRow(
     node,
     depth
@@ -1862,6 +1917,9 @@ function renderFileRow(
     );
     item.appendChild(
         name
+    );
+    item.appendChild(
+        createRowMenuButton(node.path, "file")
     );
     item.title = node.path;
     attachRowDrag(
@@ -1918,7 +1976,8 @@ function renderFolderRow(
             "span"
         );
     addFileBtn.className = "folder-add-btn";
-    addFileBtn.textContent = "＋";
+    addFileBtn.innerHTML =
+        '<svg class="icon"><use href="#i-plus"></use></svg>';
     addFileBtn.title = "New file in this folder";
     addFileBtn.setAttribute(
         "role",
@@ -1963,6 +2022,9 @@ function renderFolderRow(
     );
     item.appendChild(
         addFileBtn
+    );
+    item.appendChild(
+        createRowMenuButton(node.path, "folder")
     );
     item.title = node.path;
     attachRowDrag(
