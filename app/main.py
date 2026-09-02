@@ -772,7 +772,18 @@ def list_files(folder: Path):
 async def index():
 
     return FileResponse(
-        str(STATIC_DIR / "index.html")
+        str(STATIC_DIR / "index.html"),
+        # This page changes often as the app is developed, and
+        # mobile browsers cache HTML pretty aggressively by
+        # default (no explicit header = the browser guesses how
+        # long it's "fresh" for). Without this, a refresh can
+        # silently serve an old cached copy even after a new
+        # version has been deployed - forcing revalidation on
+        # every load means you always get what's actually live.
+        headers={
+            "Cache-Control":
+                "no-cache, must-revalidate"
+        }
     )
 
 
