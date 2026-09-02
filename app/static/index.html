@@ -3725,3 +3725,150 @@ async function startCamera() {
                 cameraFpsCount + " fps";
             cameraFpsCount = 0;
         
+        }, 1000);
+        cameraFramesInFlight = 0;
+        clearInterval(cameraCaptureTimer);
+        cameraCaptureTimer = setInterval(
+            captureAndSendCameraFrame,
+            100
+        );
+    };
+    cameraSocket.onmessage = (event) => {
+        cameraFramesInFlight = Math.max(
+            0,
+            cameraFramesInFlight - 1
+        );
+        if (!(event.data instanceof ArrayBuffer)) {
+            return;
+        }
+        const blob = new Blob(
+            [event.data],
+            { type: "image/jpeg" }
+        );
+        createImageBitmap(blob).then((bitmap) => {
+            if (
+                cameraDisplayCanvas.width !== bitmap.width ||
+                cameraDisplayCanvas.height !== bitmap.height
+            ) {
+                cameraDisplayCanvas.width = bitmap.width;
+                cameraDisplayCanvas.height = bitmap.height;
+            }
+            const ctx =
+                cameraDisplayCanvas.getContext("2d");
+            ctx.drawImage(bitmap, 0, 0);
+            bitmap.close();
+            cameraFpsCount++;
+        }).catch(() => {});
+    };
+    cameraSocket.onclose = () => {
+        if (cameraRunning) {
+            stopCamera("Disconnected");
+        }
+    };
+    cameraSocket.onerror = () => {
+        setCameraStatus("error", "Connection error");
+    };
+}
+
+/*
+ * Grabs the current video frame, JPEG-encodes it, and
+ * sends it to the server for processing. Waits for each
+ * frame's reply before sending the next one (tracked via
+ * cameraFramesInFlight) so a slow network/server can't
+ * cause frames to pile up faster than they can be shown.
+ */
+function captureAndSendCameraFrame() {
+    if (
+        !cameraSocket ||
+        cameraSocket.readyState !== WebSocket.OPEN
+    ) {
+        return;
+    }
+    if (cameraFramesInFlight > 0) {
+        return;
+    }
+    if (
+        !cameraVideoEl.videoWidth ||
+        !cameraVideoEl.videoHeight
+    ) {
+        return;
+    }
+    cameraCaptureCanvas.width = cameraVideoEl.videoWidth;
+    cameraCaptureCanvas.height = cameraVideoEl.videoHeight;
+    const ctx = cameraCaptureCanvas.getContext("2d");
+    ctx.drawImage(cameraVideoEl, 0, 0);
+    cameraCaptureCanvas.toBlob(
+        (blob) => {
+            if (
+                !blob ||
+                !cameraSocket ||
+                cameraSocket.readyState !== WebSocket.OPEN
+            ) {
+                return;
+            }
+            cameraFramesInFlight++;
+            blob.arrayBuffer().then((buffer) => {
+                if (
+                    cameraSocket &&
+                    cameraSocket.readyState === WebSocket.OPEN
+                ) {
+                    cameraSocket.send(buffer);
+                }
+            });
+        },
+        "image/jpeg",
+        0.7
+    );
+}
+
+function stopCamera(reason) {
+    cameraRunning = false;
+    clearInterval(cameraCaptureTimer);
+    cameraCaptureTimer = null;
+    clearInterval(cameraFpsTimer);
+    cameraFpsTimer = null;
+    cameraFramesInFlight = 0;
+    if (cameraSocket) {
+        try {
+            cameraSocket.onclose = null;
+            cameraSocket.close();
+        } catch {}
+        cameraSocket = null;
+    }
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(
+            (track) => track.stop()
+        );
+        cameraStream = null;
+    }
+    cameraVideoEl.srcObject = null;
+    cameraStartBtn.disabled = false;
+    cameraStartBtn.textContent = "▶ Start";
+    cameraDisplayCanvas.classList.remove("show");
+    cameraFpsEl.classList.remove("show");
+    cameraPlaceholder.classList.remove("hide");
+    setCameraStatus("disconnected", reason || "Stopped");
+}
+
+function switchCameraFacing() {
+    cameraFacingMode =
+        cameraFacingMode === "environment"
+            ? "user"
+            : "environment";
+    if (cameraRunning) {
+        stopCamera("Switching camera...");
+        startCamera();
+    }
+}
+
+/* =====================================================
+   BOOTSTRAP
+   Kicks the whole app off - loads (or creates) a
+   project and populates the file tree. Everything else
+   (Run, Save, the terminal, etc.) is inert until this
+   has set currentProject.
+===================================================== */
+loadProjects();
+</script>
+</body>
+</html>
