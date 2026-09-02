@@ -1,0 +1,785 @@
+        * {
+            box-sizing: border-box;
+        }
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            /*
+             * 100dvh accounts for mobile browser chrome
+             * (address bar, nav bar) showing/hiding, so the
+             * layout doesn't get cut off or leave a gap on
+             * phones. Falls back to 100% on browsers that
+             * don't support dvh.
+             */
+            height: 100dvh;
+            overflow: hidden;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            background: #0d1117;
+            color: #e6edf3;
+            font-family:
+                Arial,
+                sans-serif;
+        }
+        /* =========================
+           HEADER
+        ========================= */
+        header {
+            height: 56px;
+            min-height: 56px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 0 10px;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 16px;
+            font-weight: bold;
+            margin-right: auto;
+            white-space: nowrap;
+        }
+        .logo-icon {
+            font-size: 20px;
+        }
+        #toolbarMoreWrap {
+            position: relative;
+        }
+        #moreToolbarBtn {
+            display: none;
+        }
+        #toolbarMore {
+            display: contents;
+        }
+        button {
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px 11px;
+            background: #21262d;
+            color: #e6edf3;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        button:hover {
+            background: #30363d;
+        }
+        button:active {
+            transform: translateY(1px);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .run-button {
+            background: #238636;
+            border-color: #2ea043;
+        }
+        .run-button:hover {
+            background: #2ea043;
+        }
+        /* =========================
+           MOBILE HAMBURGER + DRAWER
+           (hidden on desktop; enabled
+           in the mobile media query
+           below)
+        ========================= */
+        #hamburger {
+            display: none;
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+        #backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 90;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        #backdrop.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        /* =========================
+           MOBILE BOTTOM TAB BAR
+           (Editor / Output switch;
+           hidden on desktop)
+        ========================= */
+        #mobileTabs {
+            display: none;
+            height: 52px;
+            min-height: 52px;
+            background: #161b22;
+            border-top: 1px solid #30363d;
+        }
+        #mobileTabs button {
+            flex: 1;
+            border: none;
+            border-radius: 0;
+            border-right: 1px solid #30363d;
+            background: transparent;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            font-size: 11px;
+            color: #8b949e;
+        }
+        #mobileTabs button:last-child {
+            border-right: none;
+        }
+        #mobileTabs button.active {
+            background: #21262d;
+            color: #58a6ff;
+        }
+        /* =========================
+           MAIN WORKSPACE
+        ========================= */
+        #workspace {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+        }
+        /* =========================
+           SIDEBAR
+        ========================= */
+        #sidebar {
+            width: 235px;
+            min-width: 235px;
+            display: flex;
+            flex-direction: column;
+            background: #161b22;
+            border-right: 1px solid #30363d;
+        }
+        .sidebar-header {
+            height: 46px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px;
+            border-bottom: 1px solid #30363d;
+        }
+        #projectSelect {
+            flex: 1;
+            min-width: 0;
+            height: 31px;
+            padding: 0 7px;
+            border: 1px solid #30363d;
+            border-radius: 5px;
+            outline: none;
+            background: #0d1117;
+            color: #e6edf3;
+        }
+        .small-button {
+            width: 31px;
+            height: 31px;
+            padding: 0;
+            font-size: 16px;
+        }
+        .files-title {
+            padding: 10px 10px 5px;
+            color: #8b949e;
+            font-size: 11px;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+        }
+        #files {
+            flex: 1;
+            min-height: 0;
+            padding: 4px 7px 10px;
+            overflow-y: auto;
+        }
+        .file {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            width: 100%;
+            padding: 8px 8px;
+            border-radius: 5px;
+            color: #c9d1d9;
+            font-family: monospace;
+            font-size: 13px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .file:hover {
+            background: #21262d;
+        }
+        .file.active {
+            background: #30363d;
+            color: white;
+        }
+        .file-icon {
+            flex-shrink: 0;
+        }
+        .file-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .empty-files {
+            padding: 12px 9px;
+            color: #8b949e;
+            font-size: 12px;
+        }
+        .folder-arrow {
+            flex-shrink: 0;
+            width: 12px;
+            font-size: 10px;
+            color: #8b949e;
+        }
+        .folder-add-btn {
+            flex-shrink: 0;
+            margin-left: auto;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #8b949e;
+        }
+        .folder-add-btn:hover {
+            background: #30363d;
+            color: #c9d1d9;
+        }
+        .file.drop-target {
+            background: #1f6feb33;
+            outline: 1px dashed #58a6ff;
+        }
+        .file.dragging {
+            opacity: 0.4;
+        }
+        /* =========================
+           EDITOR AREA
+        ========================= */
+        #main {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        #filebar {
+            height: 38px;
+            min-height: 38px;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            background: #0d1117;
+            border-bottom: 1px solid #30363d;
+        }
+        #deleteLineBtn {
+            margin-left: auto;
+            padding: 5px 10px;
+            font-size: 12px;
+            min-height: 0;
+            flex-shrink: 0;
+        }
+        #filename {
+            font-family: monospace;
+            font-size: 13px;
+            color: #c9d1d9;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+            min-width: 0;
+        }
+        #dirty {
+            margin-left: 7px;
+            color: #f0f6fc;
+            display: none;
+        }
+        #editor {
+            flex: 1;
+            width: 100%;
+            min-height: 0;
+            resize: none;
+            border: none;
+            outline: none;
+            padding: 15px;
+            background: #0d1117;
+            color: #e6edf3;
+            font-family:
+                "Courier New",
+                monospace;
+            font-size: 15px;
+            line-height: 1.55;
+            tab-size: 4;
+            white-space: pre;
+            overflow: auto;
+        }
+        #editor::placeholder {
+            color: #484f58;
+        }
+        /* =========================
+           CODEMIRROR (CODE EDITOR)
+        ========================= */
+        #main .CodeMirror {
+            flex: 1;
+            min-height: 0;
+            height: 100%;
+            width: 100%;
+            font-family:
+                "Courier New",
+                monospace;
+            font-size: 15px;
+            line-height: 1.55;
+        }
+        .cm-s-ideDark.CodeMirror {
+            background: #0d1117;
+            color: #e6edf3;
+        }
+        .cm-s-ideDark .CodeMirror-gutters {
+            background: #0d1117;
+            border-right: 1px solid #21262d;
+        }
+        .cm-s-ideDark .CodeMirror-linenumber {
+            color: #484f58;
+        }
+        .cm-s-ideDark .CodeMirror-cursor {
+            border-left: 1px solid #e6edf3;
+        }
+        .cm-s-ideDark .CodeMirror-selected {
+            background: #264f78;
+        }
+        .cm-s-ideDark .CodeMirror-activeline-background {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .cm-s-ideDark .CodeMirror-matchingbracket {
+            color: #58a6ff !important;
+            background: rgba(88, 166, 255, 0.15);
+        }
+        .cm-s-ideDark .cm-keyword {
+            color: #ff7b72;
+        }
+        .cm-s-ideDark .cm-def {
+            color: #d2a8ff;
+        }
+        .cm-s-ideDark .cm-variable,
+        .cm-s-ideDark .cm-variable-2,
+        .cm-s-ideDark .cm-variable-3,
+        .cm-s-ideDark .cm-property {
+            color: #79c0ff;
+        }
+        .cm-s-ideDark .cm-operator {
+            color: #ff7b72;
+        }
+        .cm-s-ideDark .cm-comment {
+            color: #8b949e;
+            font-style: italic;
+        }
+        .cm-s-ideDark .cm-string,
+        .cm-s-ideDark .cm-string-2 {
+            color: #a5d6ff;
+        }
+        .cm-s-ideDark .cm-number,
+        .cm-s-ideDark .cm-atom {
+            color: #79c0ff;
+        }
+        .cm-s-ideDark .cm-meta {
+            color: #d2a8ff;
+        }
+        .cm-s-ideDark .cm-builtin {
+            color: #ffa657;
+        }
+        .cm-s-ideDark .cm-error {
+            color: #f85149;
+        }
+        /* =========================
+           FILE CONTEXT MENU
+           (right-click / long-press
+           on a file to rename or
+           delete it)
+        ========================= */
+        #fileContextMenu {
+            display: none;
+            position: fixed;
+            z-index: 200;
+            min-width: 150px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 7px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            padding: 4px;
+            overflow: hidden;
+        }
+        #fileContextMenu.show {
+            display: block;
+        }
+        #fileContextMenu button {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            border: none;
+            border-radius: 5px;
+            background: transparent;
+            padding: 9px 10px;
+            font-size: 13px;
+            text-align: left;
+        }
+        #fileContextMenu button:hover {
+            background: #30363d;
+        }
+        #fileContextMenu button.danger {
+            color: #f85149;
+        }
+        /* =========================
+           TERMINAL
+        ========================= */
+        #terminal {
+            height: 190px;
+            min-height: 120px;
+            display: flex;
+            flex-direction: column;
+            background: #010409;
+            border-top: 1px solid #30363d;
+        }
+        .terminal-header {
+            height: 36px;
+            min-height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 8px 0 4px;
+            border-bottom: 1px solid #21262d;
+            color: #8b949e;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .term-tabs {
+            display: flex;
+            align-items: center;
+            height: 100%;
+        }
+        .term-tab {
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            border-radius: 0;
+            color: #8b949e;
+            font-size: 11px;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+            height: 100%;
+            padding: 0 10px;
+            cursor: pointer;
+        }
+        .term-tab:hover {
+            background: transparent;
+            color: #e6edf3;
+        }
+        .term-tab.active {
+            color: #e6edf3;
+            border-bottom-color: #58a6ff;
+        }
+        .term-toolbar {
+            display: none;
+            align-items: center;
+            gap: 6px;
+        }
+        .term-toolbar.show {
+            display: flex;
+        }
+        .term-tool-btn {
+            padding: 3px 8px;
+            font-size: 11px;
+            min-height: 0;
+        }
+        .term-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #6e7681;
+            flex-shrink: 0;
+        }
+        .term-status-dot.connecting {
+            background: #d29922;
+        }
+        .term-status-dot.connected {
+            background: #3fb950;
+        }
+        .term-status-dot.error {
+            background: #f85149;
+        }
+        .term-pane {
+            display: none;
+            flex: 1;
+            min-height: 0;
+            flex-direction: column;
+        }
+        .term-pane.active {
+            display: flex;
+        }
+        #xtermPane {
+            position: relative;
+        }
+        #output {
+            flex: 1;
+            min-height: 0;
+            margin: 0;
+            padding: 11px 12px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #e6edf3;
+            font-family:
+                "Courier New",
+                monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        #xtermContainer {
+            flex: 1;
+            min-height: 0;
+            padding: 8px 4px 4px 8px;
+            overflow: hidden;
+        }
+        #xtermContainer .xterm {
+            height: 100%;
+        }
+        #xtermContainer .xterm-viewport {
+            /* let the browser's compositor handle scrolling
+               instead of routing every touch through JS */
+            touch-action: pan-y;
+            /* without this, touch-drag scrolls the viewport
+               only exactly as far as the finger physically
+               moves and stops dead on lift - no momentum/
+               fling. This restores native inertial scroll. */
+            -webkit-overflow-scrolling: touch;
+            overflow-y: scroll !important;
+        }
+        #termToast {
+            position: absolute;
+            left: 50%;
+            bottom: 14px;
+            transform: translateX(-50%) translateY(6px);
+            background: #1f6feb;
+            color: #fff;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 6px 12px;
+            border-radius: 6px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease, transform 0.15s ease;
+            z-index: 20;
+        }
+        #termToast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        /* =========================
+           CAMERA
+        ========================= */
+        #cameraPane {
+            position: relative;
+        }
+        #cameraStage {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        #cameraVideoEl {
+            /*
+             * Only used internally to grab frames - but
+             * `display: none` makes many mobile browsers
+             * stop actually decoding video frames entirely
+             * (videoWidth/videoHeight stay 0 forever), which
+             * silently breaks capture. Keeping it "on-screen"
+             * but invisible/out of the way avoids that.
+             */
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            opacity: 0;
+            pointer-events: none;
+            top: 0;
+            left: 0;
+        }
+        #cameraCaptureCanvas {
+            /* a canvas isn't subject to the same issue -
+               drawImage/toBlob work fine while hidden */
+            display: none;
+        }
+        #cameraDisplayCanvas {
+            max-width: 100%;
+            max-height: 100%;
+            display: none;
+        }
+        #cameraDisplayCanvas.show {
+            display: block;
+        }
+        #cameraPlaceholder {
+            color: #8b949e;
+            font-size: 13px;
+            text-align: center;
+            padding: 0 24px;
+            line-height: 1.6;
+        }
+        #cameraPlaceholder.hide {
+            display: none;
+        }
+        #cameraFps {
+            position: absolute;
+            top: 8px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.55);
+            color: #56d364;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 2px 7px;
+            border-radius: 5px;
+            display: none;
+        }
+        #cameraFps.show {
+            display: block;
+        }
+        /* =========================
+           MOBILE
+        ========================= */
+        @media (max-width: 700px) {
+            header {
+                padding: 0 7px;
+                gap: 4px;
+            }
+            .logo {
+                font-size: 14px;
+            }
+            .logo-icon {
+                font-size: 18px;
+            }
+            button {
+                /* larger tap targets on touch screens */
+                min-height: 40px;
+                padding: 8px 10px;
+                font-size: 12px;
+            }
+            #moreToolbarBtn {
+                display: flex;
+            }
+            #toolbarMore {
+                display: none;
+                position: fixed;
+                top: 56px;
+                right: 7px;
+                flex-direction: column;
+                align-items: stretch;
+                background: #21262d;
+                border: 1px solid #30363d;
+                border-radius: 8px;
+                padding: 6px;
+                gap: 4px;
+                min-width: 190px;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+                z-index: 250;
+            }
+            #toolbarMore.show {
+                display: flex;
+            }
+            #toolbarMore button {
+                width: 100%;
+                text-align: left;
+                justify-content: flex-start;
+            }
+            #hamburger {
+                display: flex;
+            }
+            /*
+             * Sidebar becomes a slide-in drawer that overlays
+             * the workspace instead of squeezing the editor
+             * into a sliver of the screen.
+             */
+            #sidebar {
+                position: fixed;
+                top: 56px;
+                left: 0;
+                bottom: 0;
+                width: 82vw;
+                max-width: 300px;
+                min-width: 0;
+                z-index: 100;
+                transform: translateX(-100%);
+                transition: transform 0.22s ease;
+                box-shadow: 2px 0 16px rgba(0, 0, 0, 0.55);
+            }
+            #sidebar.open {
+                transform: translateX(0);
+            }
+            #backdrop {
+                display: block;
+                top: 56px;
+            }
+            #mobileTabs {
+                display: flex;
+            }
+            /*
+             * Only one of Editor / Output is shown at a time
+             * on mobile, controlled by data-mobile-view on
+             * <body>, and switched via #mobileTabs.
+             */
+            body[data-mobile-view="editor"] #terminal {
+                display: none;
+            }
+            body[data-mobile-view="output"] #editor,
+            body[data-mobile-view="output"] .CodeMirror,
+            body[data-mobile-view="output"] #filebar {
+                display: none;
+            }
+            body[data-mobile-view="output"] #terminal {
+                flex: 1;
+                height: auto;
+            }
+            #terminal {
+                height: 100%;
+            }
+            #main .CodeMirror {
+                /* keep >=16px so iOS/Android don't zoom in on focus */
+                font-size: 16px;
+            }
+            #projectSelect {
+                font-size: 16px;
+            }
+            #deleteLineBtn {
+                padding: 7px 10px;
+                font-size: 13px;
+            }
+        }
+        @media (max-width: 480px) {
+            .logo-text {
+                display: none;
+            }
+            #sidebar {
+                width: 86vw;
+            }
+            button {
+                font-size: 11px;
+                padding: 8px 8px;
+            }
+        }
+    
