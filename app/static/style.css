@@ -1,785 +1,999 @@
-        * {
-            box-sizing: border-box;
-        }
-        html,
-        body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            /*
-             * 100dvh accounts for mobile browser chrome
-             * (address bar, nav bar) showing/hiding, so the
-             * layout doesn't get cut off or leave a gap on
-             * phones. Falls back to 100% on browsers that
-             * don't support dvh.
-             */
-            height: 100dvh;
-            overflow: hidden;
-        }
-        body {
-            display: flex;
-            flex-direction: column;
-            background: #0d1117;
-            color: #e6edf3;
-            font-family:
-                Arial,
-                sans-serif;
-        }
-        /* =========================
-           HEADER
-        ========================= */
-        header {
-            height: 56px;
-            min-height: 56px;
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            padding: 0 10px;
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-        }
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            font-size: 16px;
-            font-weight: bold;
-            margin-right: auto;
-            white-space: nowrap;
-        }
-        .logo-icon {
-            font-size: 20px;
-        }
-        #toolbarMoreWrap {
-            position: relative;
-        }
-        #moreToolbarBtn {
-            display: none;
-        }
-        #toolbarMore {
-            display: contents;
-        }
-        button {
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 8px 11px;
-            background: #21262d;
-            color: #e6edf3;
-            font-size: 13px;
-            cursor: pointer;
-            white-space: nowrap;
-        }
-        button:hover {
-            background: #30363d;
-        }
-        button:active {
-            transform: translateY(1px);
-        }
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        .run-button {
-            background: #238636;
-            border-color: #2ea043;
-        }
-        .run-button:hover {
-            background: #2ea043;
-        }
-        /* =========================
-           MOBILE HAMBURGER + DRAWER
-           (hidden on desktop; enabled
-           in the mobile media query
-           below)
-        ========================= */
-        #hamburger {
-            display: none;
-            width: 36px;
-            height: 36px;
-            padding: 0;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            flex-shrink: 0;
-        }
-        #backdrop {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 90;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-        }
-        #backdrop.show {
-            opacity: 1;
-            pointer-events: auto;
-        }
-        /* =========================
-           MOBILE BOTTOM TAB BAR
-           (Editor / Output switch;
-           hidden on desktop)
-        ========================= */
-        #mobileTabs {
-            display: none;
-            height: 52px;
-            min-height: 52px;
-            background: #161b22;
-            border-top: 1px solid #30363d;
-        }
-        #mobileTabs button {
-            flex: 1;
-            border: none;
-            border-radius: 0;
-            border-right: 1px solid #30363d;
-            background: transparent;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 2px;
-            font-size: 11px;
-            color: #8b949e;
-        }
-        #mobileTabs button:last-child {
-            border-right: none;
-        }
-        #mobileTabs button.active {
-            background: #21262d;
-            color: #58a6ff;
-        }
-        /* =========================
-           MAIN WORKSPACE
-        ========================= */
-        #workspace {
-            flex: 1;
-            min-height: 0;
-            display: flex;
-        }
-        /* =========================
-           SIDEBAR
-        ========================= */
-        #sidebar {
-            width: 235px;
-            min-width: 235px;
-            display: flex;
-            flex-direction: column;
-            background: #161b22;
-            border-right: 1px solid #30363d;
-        }
-        .sidebar-header {
-            height: 46px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 7px;
-            border-bottom: 1px solid #30363d;
-        }
-        #projectSelect {
-            flex: 1;
-            min-width: 0;
-            height: 31px;
-            padding: 0 7px;
-            border: 1px solid #30363d;
-            border-radius: 5px;
-            outline: none;
-            background: #0d1117;
-            color: #e6edf3;
-        }
-        .small-button {
-            width: 31px;
-            height: 31px;
-            padding: 0;
-            font-size: 16px;
-        }
-        .files-title {
-            padding: 10px 10px 5px;
-            color: #8b949e;
-            font-size: 11px;
-            font-weight: bold;
-            letter-spacing: 0.5px;
-        }
-        #files {
-            flex: 1;
-            min-height: 0;
-            padding: 4px 7px 10px;
-            overflow-y: auto;
-        }
-        .file {
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            width: 100%;
-            padding: 8px 8px;
-            border-radius: 5px;
-            color: #c9d1d9;
-            font-family: monospace;
-            font-size: 13px;
-            cursor: pointer;
-            user-select: none;
-        }
-        .file:hover {
-            background: #21262d;
-        }
-        .file.active {
-            background: #30363d;
-            color: white;
-        }
-        .file-icon {
-            flex-shrink: 0;
-        }
-        .file-name {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .empty-files {
-            padding: 12px 9px;
-            color: #8b949e;
-            font-size: 12px;
-        }
-        .folder-arrow {
-            flex-shrink: 0;
-            width: 12px;
-            font-size: 10px;
-            color: #8b949e;
-        }
-        .folder-add-btn {
-            flex-shrink: 0;
-            margin-left: auto;
-            width: 22px;
-            height: 22px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
-            font-size: 13px;
-            color: #8b949e;
-        }
-        .folder-add-btn:hover {
-            background: #30363d;
-            color: #c9d1d9;
-        }
-        .file.drop-target {
-            background: #1f6feb33;
-            outline: 1px dashed #58a6ff;
-        }
-        .file.dragging {
-            opacity: 0.4;
-        }
-        /* =========================
-           EDITOR AREA
-        ========================= */
-        #main {
-            flex: 1;
-            min-width: 0;
-            display: flex;
-            flex-direction: column;
-        }
-        #filebar {
-            height: 38px;
-            min-height: 38px;
-            display: flex;
-            align-items: center;
-            padding: 0 12px;
-            background: #0d1117;
-            border-bottom: 1px solid #30363d;
-        }
-        #deleteLineBtn {
-            margin-left: auto;
-            padding: 5px 10px;
-            font-size: 12px;
-            min-height: 0;
-            flex-shrink: 0;
-        }
-        #filename {
-            font-family: monospace;
-            font-size: 13px;
-            color: #c9d1d9;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            flex: 1;
-            min-width: 0;
-        }
-        #dirty {
-            margin-left: 7px;
-            color: #f0f6fc;
-            display: none;
-        }
-        #editor {
-            flex: 1;
-            width: 100%;
-            min-height: 0;
-            resize: none;
-            border: none;
-            outline: none;
-            padding: 15px;
-            background: #0d1117;
-            color: #e6edf3;
-            font-family:
-                "Courier New",
-                monospace;
-            font-size: 15px;
-            line-height: 1.55;
-            tab-size: 4;
-            white-space: pre;
-            overflow: auto;
-        }
-        #editor::placeholder {
-            color: #484f58;
-        }
-        /* =========================
-           CODEMIRROR (CODE EDITOR)
-        ========================= */
-        #main .CodeMirror {
-            flex: 1;
-            min-height: 0;
-            height: 100%;
-            width: 100%;
-            font-family:
-                "Courier New",
-                monospace;
-            font-size: 15px;
-            line-height: 1.55;
-        }
-        .cm-s-ideDark.CodeMirror {
-            background: #0d1117;
-            color: #e6edf3;
-        }
-        .cm-s-ideDark .CodeMirror-gutters {
-            background: #0d1117;
-            border-right: 1px solid #21262d;
-        }
-        .cm-s-ideDark .CodeMirror-linenumber {
-            color: #484f58;
-        }
-        .cm-s-ideDark .CodeMirror-cursor {
-            border-left: 1px solid #e6edf3;
-        }
-        .cm-s-ideDark .CodeMirror-selected {
-            background: #264f78;
-        }
-        .cm-s-ideDark .CodeMirror-activeline-background {
-            background: rgba(255, 255, 255, 0.05);
-        }
-        .cm-s-ideDark .CodeMirror-matchingbracket {
-            color: #58a6ff !important;
-            background: rgba(88, 166, 255, 0.15);
-        }
-        .cm-s-ideDark .cm-keyword {
-            color: #ff7b72;
-        }
-        .cm-s-ideDark .cm-def {
-            color: #d2a8ff;
-        }
-        .cm-s-ideDark .cm-variable,
-        .cm-s-ideDark .cm-variable-2,
-        .cm-s-ideDark .cm-variable-3,
-        .cm-s-ideDark .cm-property {
-            color: #79c0ff;
-        }
-        .cm-s-ideDark .cm-operator {
-            color: #ff7b72;
-        }
-        .cm-s-ideDark .cm-comment {
-            color: #8b949e;
-            font-style: italic;
-        }
-        .cm-s-ideDark .cm-string,
-        .cm-s-ideDark .cm-string-2 {
-            color: #a5d6ff;
-        }
-        .cm-s-ideDark .cm-number,
-        .cm-s-ideDark .cm-atom {
-            color: #79c0ff;
-        }
-        .cm-s-ideDark .cm-meta {
-            color: #d2a8ff;
-        }
-        .cm-s-ideDark .cm-builtin {
-            color: #ffa657;
-        }
-        .cm-s-ideDark .cm-error {
-            color: #f85149;
-        }
-        /* =========================
-           FILE CONTEXT MENU
-           (right-click / long-press
-           on a file to rename or
-           delete it)
-        ========================= */
-        #fileContextMenu {
-            display: none;
-            position: fixed;
-            z-index: 200;
-            min-width: 150px;
-            background: #21262d;
-            border: 1px solid #30363d;
-            border-radius: 7px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-            padding: 4px;
-            overflow: hidden;
-        }
-        #fileContextMenu.show {
-            display: block;
-        }
-        #fileContextMenu button {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            width: 100%;
-            border: none;
-            border-radius: 5px;
-            background: transparent;
-            padding: 9px 10px;
-            font-size: 13px;
-            text-align: left;
-        }
-        #fileContextMenu button:hover {
-            background: #30363d;
-        }
-        #fileContextMenu button.danger {
-            color: #f85149;
-        }
-        /* =========================
-           TERMINAL
-        ========================= */
-        #terminal {
-            height: 190px;
-            min-height: 120px;
-            display: flex;
-            flex-direction: column;
-            background: #010409;
-            border-top: 1px solid #30363d;
-        }
-        .terminal-header {
-            height: 36px;
-            min-height: 36px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 8px 0 4px;
-            border-bottom: 1px solid #21262d;
-            color: #8b949e;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .term-tabs {
-            display: flex;
-            align-items: center;
-            height: 100%;
-        }
-        .term-tab {
-            background: transparent;
-            border: none;
-            border-bottom: 2px solid transparent;
-            border-radius: 0;
-            color: #8b949e;
-            font-size: 11px;
-            font-weight: bold;
-            letter-spacing: 0.5px;
-            height: 100%;
-            padding: 0 10px;
-            cursor: pointer;
-        }
-        .term-tab:hover {
-            background: transparent;
-            color: #e6edf3;
-        }
-        .term-tab.active {
-            color: #e6edf3;
-            border-bottom-color: #58a6ff;
-        }
-        .term-toolbar {
-            display: none;
-            align-items: center;
-            gap: 6px;
-        }
-        .term-toolbar.show {
-            display: flex;
-        }
-        .term-tool-btn {
-            padding: 3px 8px;
-            font-size: 11px;
-            min-height: 0;
-        }
-        .term-status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #6e7681;
-            flex-shrink: 0;
-        }
-        .term-status-dot.connecting {
-            background: #d29922;
-        }
-        .term-status-dot.connected {
-            background: #3fb950;
-        }
-        .term-status-dot.error {
-            background: #f85149;
-        }
-        .term-pane {
-            display: none;
-            flex: 1;
-            min-height: 0;
-            flex-direction: column;
-        }
-        .term-pane.active {
-            display: flex;
-        }
-        #xtermPane {
-            position: relative;
-        }
-        #output {
-            flex: 1;
-            min-height: 0;
-            margin: 0;
-            padding: 11px 12px;
-            overflow: auto;
-            white-space: pre-wrap;
-            word-break: break-word;
-            color: #e6edf3;
-            font-family:
-                "Courier New",
-                monospace;
-            font-size: 13px;
-            line-height: 1.5;
-        }
-        #xtermContainer {
-            flex: 1;
-            min-height: 0;
-            padding: 8px 4px 4px 8px;
-            overflow: hidden;
-        }
-        #xtermContainer .xterm {
-            height: 100%;
-        }
-        #xtermContainer .xterm-viewport {
-            /* let the browser's compositor handle scrolling
-               instead of routing every touch through JS */
-            touch-action: pan-y;
-            /* without this, touch-drag scrolls the viewport
-               only exactly as far as the finger physically
-               moves and stops dead on lift - no momentum/
-               fling. This restores native inertial scroll. */
-            -webkit-overflow-scrolling: touch;
-            overflow-y: scroll !important;
-        }
-        #termToast {
-            position: absolute;
-            left: 50%;
-            bottom: 14px;
-            transform: translateX(-50%) translateY(6px);
-            background: #1f6feb;
-            color: #fff;
-            font-size: 12px;
-            font-weight: bold;
-            padding: 6px 12px;
-            border-radius: 6px;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s ease, transform 0.15s ease;
-            z-index: 20;
-        }
-        #termToast.show {
-            opacity: 1;
-            transform: translateX(-50%) translateY(0);
-        }
-        /* =========================
-           CAMERA
-        ========================= */
-        #cameraPane {
-            position: relative;
-        }
-        #cameraStage {
-            flex: 1;
-            min-height: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #000;
-            position: relative;
-            overflow: hidden;
-        }
-        #cameraVideoEl {
-            /*
-             * Only used internally to grab frames - but
-             * `display: none` makes many mobile browsers
-             * stop actually decoding video frames entirely
-             * (videoWidth/videoHeight stay 0 forever), which
-             * silently breaks capture. Keeping it "on-screen"
-             * but invisible/out of the way avoids that.
-             */
-            position: absolute;
-            width: 2px;
-            height: 2px;
-            opacity: 0;
-            pointer-events: none;
-            top: 0;
-            left: 0;
-        }
-        #cameraCaptureCanvas {
-            /* a canvas isn't subject to the same issue -
-               drawImage/toBlob work fine while hidden */
-            display: none;
-        }
-        #cameraDisplayCanvas {
-            max-width: 100%;
-            max-height: 100%;
-            display: none;
-        }
-        #cameraDisplayCanvas.show {
-            display: block;
-        }
-        #cameraPlaceholder {
-            color: #8b949e;
-            font-size: 13px;
-            text-align: center;
-            padding: 0 24px;
-            line-height: 1.6;
-        }
-        #cameraPlaceholder.hide {
-            display: none;
-        }
-        #cameraFps {
-            position: absolute;
-            top: 8px;
-            right: 10px;
-            background: rgba(0, 0, 0, 0.55);
-            color: #56d364;
-            font-size: 11px;
-            font-weight: bold;
-            padding: 2px 7px;
-            border-radius: 5px;
-            display: none;
-        }
-        #cameraFps.show {
-            display: block;
-        }
-        /* =========================
-           MOBILE
-        ========================= */
-        @media (max-width: 700px) {
-            header {
-                padding: 0 7px;
-                gap: 4px;
-            }
-            .logo {
-                font-size: 14px;
-            }
-            .logo-icon {
-                font-size: 18px;
-            }
-            button {
-                /* larger tap targets on touch screens */
-                min-height: 40px;
-                padding: 8px 10px;
-                font-size: 12px;
-            }
-            #moreToolbarBtn {
-                display: flex;
-            }
-            #toolbarMore {
-                display: none;
-                position: fixed;
-                top: 56px;
-                right: 7px;
-                flex-direction: column;
-                align-items: stretch;
-                background: #21262d;
-                border: 1px solid #30363d;
-                border-radius: 8px;
-                padding: 6px;
-                gap: 4px;
-                min-width: 190px;
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
-                z-index: 250;
-            }
-            #toolbarMore.show {
-                display: flex;
-            }
-            #toolbarMore button {
-                width: 100%;
-                text-align: left;
-                justify-content: flex-start;
-            }
-            #hamburger {
-                display: flex;
-            }
-            /*
-             * Sidebar becomes a slide-in drawer that overlays
-             * the workspace instead of squeezing the editor
-             * into a sliver of the screen.
-             */
-            #sidebar {
-                position: fixed;
-                top: 56px;
-                left: 0;
-                bottom: 0;
-                width: 82vw;
-                max-width: 300px;
-                min-width: 0;
-                z-index: 100;
-                transform: translateX(-100%);
-                transition: transform 0.22s ease;
-                box-shadow: 2px 0 16px rgba(0, 0, 0, 0.55);
-            }
-            #sidebar.open {
-                transform: translateX(0);
-            }
-            #backdrop {
-                display: block;
-                top: 56px;
-            }
-            #mobileTabs {
-                display: flex;
-            }
-            /*
-             * Only one of Editor / Output is shown at a time
-             * on mobile, controlled by data-mobile-view on
-             * <body>, and switched via #mobileTabs.
-             */
-            body[data-mobile-view="editor"] #terminal {
-                display: none;
-            }
-            body[data-mobile-view="output"] #editor,
-            body[data-mobile-view="output"] .CodeMirror,
-            body[data-mobile-view="output"] #filebar {
-                display: none;
-            }
-            body[data-mobile-view="output"] #terminal {
-                flex: 1;
-                height: auto;
-            }
-            #terminal {
-                height: 100%;
-            }
-            #main .CodeMirror {
-                /* keep >=16px so iOS/Android don't zoom in on focus */
-                font-size: 16px;
-            }
-            #projectSelect {
-                font-size: 16px;
-            }
-            #deleteLineBtn {
-                padding: 7px 10px;
-                font-size: 13px;
-            }
-        }
-        @media (max-width: 480px) {
-            .logo-text {
-                display: none;
-            }
-            #sidebar {
-                width: 86vw;
-            }
-            button {
-                font-size: 11px;
-                padding: 8px 8px;
-            }
-        }
-    
+/* =====================================================
+   DESIGN TOKENS
+   One coherent palette/scale system - everything below
+   reads from these instead of scattering literal colors
+   and pixel values through the file. Dark-only by design:
+   this is a code editor, and every mainstream one (VS
+   Code, PyCharm, Xcode) defaults to dark for the same
+   reason - less eye strain staring at it for hours, and
+   better contrast for syntax highlighting.
+===================================================== */
+:root {
+    /* -- surfaces: chrome (headers/bars/menus) vs. content
+       wells (editor/terminal), so the UI reads as distinct
+       layers instead of one flat slab -- */
+    --bg: #0a0d12;
+    --bg-inset: #06080b;
+    --surface: #12161e;
+    --surface-raised: #181d27;
+    --surface-hover: #1d232e;
+    --surface-active: #262e3b;
+    --border: #262d3a;
+    --border-strong: #333d4d;
+
+    /* -- text -- */
+    --text: #e8ecf3;
+    --text-soft: #c3cad6;
+    --text-muted: #8891a3;
+    --text-faint: #576078;
+
+    /* -- accent: one primary interactive color, spent
+       consistently (links, focus rings, active states,
+       matching brackets) rather than scattered -- */
+    --accent: #4f8ee0;
+    --accent-hover: #6aa3ea;
+    --accent-soft: rgba(79, 142, 224, 0.16);
+
+    /* -- semantic states, shared with the terminal's ANSI
+       palette in app.js so success/error read the same
+       whether they come from a dot, a button, or shell
+       output -- */
+    --success: #3fb950;
+    --success-hover: #4cc65e;
+    --warning: #d29922;
+    --danger: #f0665d;
+    --danger-hover: #ff8079;
+
+    /* -- syntax highlighting (CodeMirror) -- */
+    --syn-keyword: #ff7b72;
+    --syn-def: #d2a8ff;
+    --syn-var: #79c0ff;
+    --syn-comment: #8b949e;
+    --syn-string: #a5d6ff;
+    --syn-builtin: #ffa657;
+
+    --radius-sm: 5px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+    /* -- fluid spacing scale: scales gently with viewport
+       instead of jumping at fixed breakpoints -- */
+    --space-1: clamp(4px, 0.5vw + 3px, 6px);
+    --space-2: clamp(6px, 0.6vw + 4px, 8px);
+    --space-3: clamp(8px, 0.8vw + 6px, 12px);
+    --space-4: clamp(11px, 1.1vw + 8px, 16px);
+    --space-5: clamp(15px, 1.6vw + 10px, 22px);
+
+    --font-ui:
+        system-ui,
+        -apple-system,
+        "Segoe UI",
+        Roboto,
+        "Helvetica Neue",
+        Arial,
+        sans-serif;
+    --font-mono:
+        ui-monospace,
+        "SF Mono",
+        "Cascadia Code",
+        "JetBrains Mono",
+        Menlo,
+        Consolas,
+        "Liberation Mono",
+        monospace;
+
+    --header-h: clamp(52px, 3.2vw + 44px, 58px);
+    --ease: 160ms ease;
+
+    color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    /*
+     * 100dvh accounts for mobile browser chrome
+     * (address bar, nav bar) showing/hiding, so the
+     * layout doesn't get cut off or leave a gap on
+     * phones. Falls back to 100% on browsers that
+     * don't support dvh.
+     */
+    height: 100dvh;
+    overflow: hidden;
+}
+body {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    -webkit-text-size-adjust: 100%;
+    /* iPhone notch / home-indicator safe areas */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+}
+::selection {
+    background: rgba(79, 142, 224, 0.35);
+}
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 20px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #414c60;
+    background-clip: padding-box;
+}
+/* =========================
+   HEADER
+========================= */
+header {
+    height: var(--header-h);
+    min-height: var(--header-h);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+    padding-top: env(safe-area-inset-top);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+.logo {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: clamp(13px, 1vw + 10px, 16px);
+    font-weight: 600;
+    margin-right: auto;
+    white-space: nowrap;
+    letter-spacing: -0.01em;
+}
+.logo-icon {
+    font-size: clamp(17px, 1.2vw + 13px, 20px);
+}
+#toolbarMoreWrap {
+    position: relative;
+}
+#moreToolbarBtn {
+    display: none;
+}
+#toolbarMore {
+    display: contents;
+}
+button {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 8px 12px;
+    background: var(--surface-hover);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+        background var(--ease),
+        border-color var(--ease),
+        transform 80ms ease;
+}
+button:hover {
+    background: var(--surface-active);
+    border-color: var(--border-strong);
+}
+button:active {
+    transform: translateY(1px);
+}
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+.run-button {
+    background: var(--success);
+    border-color: var(--success);
+    color: #06210c;
+    font-weight: 600;
+}
+.run-button:hover {
+    background: var(--success-hover);
+    border-color: var(--success-hover);
+}
+/* =========================
+   MOBILE HAMBURGER + DRAWER
+   (hidden on desktop; enabled
+   in the mobile media query
+   below)
+========================= */
+#hamburger {
+    display: none;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+#backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 6, 9, 0.6);
+    z-index: 90;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--ease);
+}
+#backdrop.show {
+    opacity: 1;
+    pointer-events: auto;
+}
+/* =========================
+   MOBILE BOTTOM TAB BAR
+   (Editor / Output switch;
+   hidden on desktop)
+========================= */
+#mobileTabs {
+    display: none;
+    height: 52px;
+    min-height: 52px;
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+}
+#mobileTabs button {
+    flex: 1;
+    border: none;
+    border-radius: 0;
+    border-right: 1px solid var(--border);
+    background: transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+#mobileTabs button:last-child {
+    border-right: none;
+}
+#mobileTabs button.active {
+    background: var(--surface-hover);
+    color: var(--accent);
+}
+/* =========================
+   MAIN WORKSPACE
+========================= */
+#workspace {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+/* =========================
+   SIDEBAR
+========================= */
+#sidebar {
+    width: clamp(215px, 18vw, 260px);
+    min-width: 215px;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+}
+.sidebar-header {
+    height: 46px;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--border);
+}
+#projectSelect {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-inset);
+    color: var(--text);
+    font-family: inherit;
+    transition: border-color var(--ease);
+}
+#projectSelect:hover {
+    border-color: var(--border-strong);
+}
+#projectSelect:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.small-button {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+.files-title {
+    padding: var(--space-3) var(--space-3) var(--space-1);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+}
+#files {
+    flex: 1;
+    min-height: 0;
+    padding: 4px var(--space-2) var(--space-3);
+    overflow-y: auto;
+}
+.file {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    padding: 8px var(--space-2);
+    border-radius: var(--radius-sm);
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--ease);
+}
+.file:hover {
+    background: var(--surface-hover);
+}
+.file.active {
+    background: var(--surface-active);
+    color: var(--text);
+}
+.file:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+}
+.file-icon {
+    flex-shrink: 0;
+}
+.file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.empty-files {
+    padding: var(--space-3) 9px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.folder-arrow {
+    flex-shrink: 0;
+    width: 12px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+.folder-add-btn {
+    flex-shrink: 0;
+    margin-left: auto;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--text-muted);
+    transition: background var(--ease), color var(--ease);
+}
+.folder-add-btn:hover {
+    background: var(--surface-active);
+    color: var(--text-soft);
+}
+.folder-add-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+.file.drop-target {
+    background: var(--accent-soft);
+    outline: 1px dashed var(--accent);
+    outline-offset: -1px;
+}
+.file.dragging {
+    opacity: 0.4;
+}
+/* =========================
+   EDITOR AREA
+========================= */
+#main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+#filebar {
+    height: 38px;
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    padding: 0 var(--space-3);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+#deleteLineBtn {
+    margin-left: auto;
+    padding: 5px 10px;
+    font-size: 12px;
+    min-height: 0;
+    flex-shrink: 0;
+}
+#filename {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-soft);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+#dirty {
+    margin-left: var(--space-2);
+    color: var(--text);
+    display: none;
+}
+#editor {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    resize: none;
+    border: none;
+    outline: none;
+    padding: 15px;
+    background: var(--bg-inset);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 15px;
+    line-height: 1.55;
+    tab-size: 4;
+    white-space: pre;
+    overflow: auto;
+}
+#editor::placeholder {
+    color: var(--text-faint);
+}
+/* =========================
+   CODEMIRROR (CODE EDITOR)
+========================= */
+#main .CodeMirror {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 15px;
+    line-height: 1.55;
+}
+.cm-s-ideDark.CodeMirror {
+    background: var(--bg-inset);
+    color: var(--text);
+}
+.cm-s-ideDark.CodeMirror-focused {
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
+}
+.cm-s-ideDark .CodeMirror-gutters {
+    background: var(--bg-inset);
+    border-right: 1px solid var(--surface);
+}
+.cm-s-ideDark .CodeMirror-linenumber {
+    color: var(--text-faint);
+}
+.cm-s-ideDark .CodeMirror-cursor {
+    border-left: 1px solid var(--text);
+}
+.cm-s-ideDark .CodeMirror-selected {
+    background: rgba(79, 142, 224, 0.28);
+}
+.cm-s-ideDark .CodeMirror-activeline-background {
+    background: rgba(255, 255, 255, 0.04);
+}
+.cm-s-ideDark .CodeMirror-matchingbracket {
+    color: var(--accent) !important;
+    background: var(--accent-soft);
+}
+.cm-s-ideDark .cm-keyword {
+    color: var(--syn-keyword);
+}
+.cm-s-ideDark .cm-def {
+    color: var(--syn-def);
+}
+.cm-s-ideDark .cm-variable,
+.cm-s-ideDark .cm-variable-2,
+.cm-s-ideDark .cm-variable-3,
+.cm-s-ideDark .cm-property {
+    color: var(--syn-var);
+}
+.cm-s-ideDark .cm-operator {
+    color: var(--syn-keyword);
+}
+.cm-s-ideDark .cm-comment {
+    color: var(--syn-comment);
+    font-style: italic;
+}
+.cm-s-ideDark .cm-string,
+.cm-s-ideDark .cm-string-2 {
+    color: var(--syn-string);
+}
+.cm-s-ideDark .cm-number,
+.cm-s-ideDark .cm-atom {
+    color: var(--syn-var);
+}
+.cm-s-ideDark .cm-meta {
+    color: var(--syn-def);
+}
+.cm-s-ideDark .cm-builtin {
+    color: var(--syn-builtin);
+}
+.cm-s-ideDark .cm-error {
+    color: var(--danger);
+}
+/* =========================
+   FILE CONTEXT MENU
+   (right-click / long-press
+   on a file to rename or
+   delete it)
+========================= */
+#fileContextMenu {
+    display: none;
+    position: fixed;
+    z-index: 200;
+    min-width: 150px;
+    max-width: calc(100vw - 16px);
+    background: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: 4px;
+    overflow: hidden;
+}
+#fileContextMenu.show {
+    display: block;
+}
+#fileContextMenu button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    padding: 9px 10px;
+    font-size: 13px;
+    text-align: left;
+}
+#fileContextMenu button:hover {
+    background: var(--surface-active);
+}
+#fileContextMenu button.danger {
+    color: var(--danger);
+}
+/* =========================
+   TERMINAL
+========================= */
+#terminal {
+    height: 190px;
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-inset);
+    border-top: 1px solid var(--border);
+}
+.terminal-header {
+    height: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--space-2) 0 4px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+.term-tabs {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+.term-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    height: 100%;
+    padding: 0 var(--space-3);
+    cursor: pointer;
+    transition: color var(--ease), border-color var(--ease);
+}
+.term-tab:hover {
+    background: transparent;
+    color: var(--text);
+}
+.term-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+}
+.term-tab:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+}
+.term-toolbar {
+    display: none;
+    align-items: center;
+    gap: var(--space-2);
+}
+.term-toolbar.show {
+    display: flex;
+}
+.term-tool-btn {
+    padding: 4px 9px;
+    font-size: 11px;
+    min-height: 0;
+}
+.term-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    flex-shrink: 0;
+}
+.term-status-dot.connecting {
+    background: var(--warning);
+}
+.term-status-dot.connected {
+    background: var(--success);
+}
+.term-status-dot.error {
+    background: var(--danger);
+}
+.term-pane {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+}
+.term-pane.active {
+    display: flex;
+}
+#xtermPane {
+    position: relative;
+}
+#output {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: var(--space-3);
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+}
+#xtermContainer {
+    flex: 1;
+    min-height: 0;
+    padding: 8px 4px 4px 8px;
+    overflow: hidden;
+}
+#xtermContainer .xterm {
+    height: 100%;
+}
+#xtermContainer .xterm-viewport {
+    /* let the browser's compositor handle scrolling
+       instead of routing every touch through JS */
+    touch-action: pan-y;
+    /* without this, touch-drag scrolls the viewport
+       only exactly as far as the finger physically
+       moves and stops dead on lift - no momentum/
+       fling. This restores native inertial scroll. */
+    -webkit-overflow-scrolling: touch;
+    overflow-y: scroll !important;
+}
+#termToast {
+    position: absolute;
+    left: 50%;
+    bottom: 14px;
+    transform: translateX(-50%) translateY(6px);
+    background: var(--accent);
+    color: #06121f;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease, transform 150ms ease;
+    z-index: 20;
+}
+#termToast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+/* =========================
+   CAMERA
+========================= */
+#cameraPane {
+    position: relative;
+}
+#cameraStage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    position: relative;
+    overflow: hidden;
+}
+#cameraVideoEl {
+    /*
+     * Only used internally to grab frames - but
+     * `display: none` makes many mobile browsers
+     * stop actually decoding video frames entirely
+     * (videoWidth/videoHeight stay 0 forever), which
+     * silently breaks capture. Keeping it "on-screen"
+     * but invisible/out of the way avoids that.
+     */
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    opacity: 0;
+    pointer-events: none;
+    top: 0;
+    left: 0;
+}
+#cameraCaptureCanvas {
+    /* a canvas isn't subject to the same issue -
+       drawImage/toBlob work fine while hidden */
+    display: none;
+}
+#cameraDisplayCanvas {
+    max-width: 100%;
+    max-height: 100%;
+    display: none;
+}
+#cameraDisplayCanvas.show {
+    display: block;
+}
+#cameraPlaceholder {
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 0 var(--space-5);
+    line-height: 1.6;
+    max-width: 46ch;
+}
+#cameraPlaceholder.hide {
+    display: none;
+}
+#cameraFps {
+    position: absolute;
+    top: var(--space-2);
+    right: var(--space-2);
+    background: rgba(6, 8, 11, 0.7);
+    color: var(--success-hover);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    display: none;
+}
+#cameraFps.show {
+    display: block;
+}
+/* =========================
+   LARGE / ULTRAWIDE DESKTOP
+   Keeps the sidebar from growing
+   pointlessly wide and gives the
+   terminal a bit more breathing
+   room once there's space to
+   spare - the editor pane still
+   fills the rest.
+========================= */
+@media (min-width: 1600px) {
+    #sidebar {
+        width: 280px;
+    }
+    #terminal {
+        height: 230px;
+    }
+}
+/* =========================
+   TABLET
+   Narrower than desktop but still
+   has room for the sidebar as a
+   fixed column (not yet a drawer).
+========================= */
+@media (max-width: 1024px) and (min-width: 701px) {
+    #sidebar {
+        width: clamp(190px, 24vw, 230px);
+        min-width: 190px;
+    }
+}
+/* =========================
+   MOBILE
+========================= */
+@media (max-width: 700px) {
+    header {
+        padding: 0 var(--space-2);
+        padding-top: env(safe-area-inset-top);
+        gap: var(--space-1);
+    }
+    .logo {
+        font-size: 14px;
+    }
+    .logo-icon {
+        font-size: 18px;
+    }
+    button {
+        /* larger tap targets on touch screens */
+        min-height: 40px;
+        padding: 8px 10px;
+        font-size: 12px;
+    }
+    #moreToolbarBtn {
+        display: flex;
+    }
+    #toolbarMore {
+        display: none;
+        position: fixed;
+        top: var(--header-h);
+        right: var(--space-2);
+        flex-direction: column;
+        align-items: stretch;
+        background: var(--surface-raised);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-lg);
+        padding: 6px;
+        gap: 4px;
+        min-width: 190px;
+        box-shadow: var(--shadow-md);
+        z-index: 250;
+    }
+    #toolbarMore.show {
+        display: flex;
+    }
+    #toolbarMore button {
+        width: 100%;
+        text-align: left;
+        justify-content: flex-start;
+    }
+    #hamburger {
+        display: flex;
+    }
+    /*
+     * Sidebar becomes a slide-in drawer that overlays
+     * the workspace instead of squeezing the editor
+     * into a sliver of the screen.
+     */
+    #sidebar {
+        position: fixed;
+        top: var(--header-h);
+        left: 0;
+        bottom: 0;
+        width: min(82vw, 320px);
+        max-width: 320px;
+        min-width: 0;
+        z-index: 100;
+        padding-bottom: env(safe-area-inset-bottom);
+        transform: translateX(-100%);
+        transition: transform var(--ease);
+        box-shadow: 2px 0 16px rgba(0, 0, 0, 0.55);
+    }
+    #sidebar.open {
+        transform: translateX(0);
+    }
+    #backdrop {
+        display: block;
+        top: var(--header-h);
+    }
+    #mobileTabs {
+        display: flex;
+    }
+    /*
+     * Only one of Editor / Output is shown at a time
+     * on mobile, controlled by data-mobile-view on
+     * <body>, and switched via #mobileTabs.
+     */
+    body[data-mobile-view="editor"] #terminal {
+        display: none;
+    }
+    body[data-mobile-view="output"] #editor,
+    body[data-mobile-view="output"] .CodeMirror,
+    body[data-mobile-view="output"] #filebar {
+        display: none;
+    }
+    body[data-mobile-view="output"] #terminal {
+        flex: 1;
+        height: auto;
+    }
+    #terminal {
+        height: 100%;
+    }
+    #main .CodeMirror {
+        /* keep >=16px so iOS/Android don't zoom in on focus */
+        font-size: 16px;
+    }
+    #projectSelect {
+        font-size: 16px;
+    }
+    #deleteLineBtn {
+        padding: 7px 10px;
+        font-size: 13px;
+    }
+}
+@media (max-width: 480px) {
+    .logo-text {
+        display: none;
+    }
+    #sidebar {
+        width: min(86vw, 320px);
+    }
+    button {
+        font-size: 11px;
+        padding: 8px 8px;
+    }
+}
+/*
+ * Short landscape phones (e.g. a phone rotated on the
+ * mobile drawer breakpoint): the 190px default terminal
+ * height would eat most of the viewport, so give it less.
+ */
+@media (max-width: 900px) and (max-height: 420px) and (orientation: landscape) {
+    #terminal {
+        height: 140px;
+        min-height: 100px;
+    }
+}
