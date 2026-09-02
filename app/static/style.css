@@ -396,12 +396,6 @@ input:focus-visible,
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.empty-files {
-    padding: var(--space-3) 9px;
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.5;
-}
 .folder-arrow {
     flex-shrink: 0;
     width: 12px;
@@ -995,5 +989,232 @@ input:focus-visible,
     #terminal {
         height: 140px;
         min-height: 100px;
+    }
+}
+
+/* =====================================================
+   ICON SYSTEM
+   Inline SVG only - no emoji, no icon-font, no external
+   icon library. Sized/colored consistently everywhere
+   via currentColor so icons always match their button's
+   text color, including on hover/disabled/danger states.
+===================================================== */
+.icon {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vertical-align: -3px;
+}
+.icon-lg {
+    width: 22px;
+    height: 22px;
+}
+.icon-xl {
+    width: 34px;
+    height: 34px;
+}
+.icon-flip {
+    transform: scaleX(-1);
+}
+button,
+.file-name,
+.logo,
+.term-tab,
+#dirty {
+    /* buttons/rows already use flex or inline layout for
+       their text; this just makes icon + label line up
+       without extra wrapper markup everywhere */
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+.file,
+#toolbarMore button,
+#fileContextMenu button {
+    /* these already declare their own display:flex above -
+       just add the icon gap on top of it */
+    column-gap: var(--space-2);
+}
+.logo-icon {
+    color: var(--accent);
+    display: inline-flex;
+}
+.file-icon {
+    display: inline-flex;
+    color: var(--text-muted);
+}
+.file-icon-py svg {
+    color: var(--accent);
+}
+.folder-arrow svg {
+    transition: transform var(--ease);
+}
+.folder-arrow.open svg {
+    transform: rotate(90deg);
+}
+.btn-icon {
+    display: inline-flex;
+}
+#cameraStartBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+/* =========================
+   DIRTY INDICATOR (CSS dot,
+   not a Unicode glyph)
+========================= */
+#dirty {
+    display: none;
+    width: 7px;
+    height: 7px;
+    margin-left: var(--space-1);
+    border-radius: 50%;
+    background: var(--warning);
+    flex-shrink: 0;
+}
+/* =========================
+   EXPLORER STATES
+   (loading / empty / error) -
+   shared by the initial
+   "Loading projects…" markup
+   and renderExplorerState()
+   in app.js.
+========================= */
+.explorer-state {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: var(--space-4) 9px;
+    color: var(--text-muted);
+}
+.explorer-state-icon {
+    color: var(--text-faint);
+    margin-bottom: 2px;
+}
+.explorer-state-title {
+    color: var(--text-soft);
+    font-size: 13px;
+    font-weight: 600;
+}
+.explorer-state-message {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    word-break: break-word;
+}
+.explorer-state-retry {
+    margin-top: 4px;
+    width: 100%;
+    justify-content: center;
+}
+.spin svg {
+    animation: icon-spin 1s linear infinite;
+}
+@keyframes icon-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+/* =========================
+   EDITOR STATUS BAR
+   Real state only: language
+   from the file extension,
+   position from CodeMirror's
+   actual cursor.
+========================= */
+#editorStatusBar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    height: 26px;
+    min-height: 26px;
+    padding: 0 var(--space-3);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    overflow: hidden;
+    white-space: nowrap;
+}
+#editorStatusBar span:first-child {
+    color: var(--accent);
+    font-weight: 600;
+}
+/* =========================
+   MOBILE CODING TOOLBAR
+   Hidden on desktop; shown
+   above the keyboard only
+   while the mobile editor
+   view is active.
+========================= */
+#mobileCodeToolbar {
+    display: none;
+    gap: 6px;
+    padding: 6px var(--space-2);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+#mobileCodeToolbar button {
+    flex-shrink: 0;
+    min-height: 36px;
+    padding: 6px 12px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+/* =========================
+   TERMINAL RESIZE HANDLE
+   (desktop only - mobile
+   controls the terminal's
+   height itself)
+========================= */
+#terminalResizeHandle {
+    height: 6px;
+    min-height: 6px;
+    cursor: row-resize;
+    background: transparent;
+    position: relative;
+    touch-action: none;
+}
+#terminalResizeHandle::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 32px;
+    height: 3px;
+    border-radius: 3px;
+    background: var(--border-strong);
+    transform: translate(-50%, -50%);
+    transition: background var(--ease);
+}
+#terminalResizeHandle:hover::before,
+#terminalResizeHandle:focus-visible::before {
+    background: var(--accent);
+}
+#terminalResizeHandle:focus-visible {
+    outline: none;
+}
+@media (max-width: 700px) {
+    #mobileCodeToolbar {
+        display: flex;
+    }
+    body[data-mobile-view="output"] #mobileCodeToolbar {
+        display: none;
+    }
+    #terminalResizeHandle {
+        display: none;
     }
 }
