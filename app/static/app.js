@@ -1730,6 +1730,43 @@ function attachRowContextMenu(
             }
             onTap();
         };
+    /*
+     * Keyboard access: these rows are plain divs (not
+     * buttons) so drag-and-drop and long-press can share
+     * one element, but that means Tab/Enter need to be
+     * wired up by hand for keyboard users.
+     */
+    item.tabIndex = 0;
+    item.setAttribute(
+        "role",
+        type === "folder" ? "treeitem" : "button"
+    );
+    item.addEventListener(
+        "keydown",
+        (event) => {
+            if (
+                event.key === "Enter" ||
+                event.key === " "
+            ) {
+                event.preventDefault();
+                onTap();
+            }
+            else if (
+                event.key === "ContextMenu" ||
+                (event.shiftKey && event.key === "F10")
+            ) {
+                event.preventDefault();
+                const rect =
+                    item.getBoundingClientRect();
+                showFileContextMenu(
+                    path,
+                    rect.left,
+                    rect.bottom,
+                    type
+                );
+            }
+        }
+    );
 }
 function renderFileRow(
     node,
@@ -1826,7 +1863,16 @@ function renderFolderRow(
     addFileBtn.className = "folder-add-btn";
     addFileBtn.textContent = "＋";
     addFileBtn.title = "New file in this folder";
-    addFileBtn.onclick =
+    addFileBtn.setAttribute(
+        "role",
+        "button"
+    );
+    addFileBtn.setAttribute(
+        "aria-label",
+        "New file in " + node.name
+    );
+    addFileBtn.tabIndex = 0;
+    const triggerAddFile =
         (event) => {
             event.stopPropagation();
             expandedFolders.add(
@@ -1836,6 +1882,19 @@ function renderFolderRow(
                 node.path
             );
         };
+    addFileBtn.onclick = triggerAddFile;
+    addFileBtn.addEventListener(
+        "keydown",
+        (event) => {
+            if (
+                event.key === "Enter" ||
+                event.key === " "
+            ) {
+                event.preventDefault();
+                triggerAddFile(event);
+            }
+        }
+    );
     item.appendChild(
         arrow
     );
