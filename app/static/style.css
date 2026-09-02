@@ -392,6 +392,8 @@ input:focus-visible,
     flex-shrink: 0;
 }
 .file-name {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -404,7 +406,6 @@ input:focus-visible,
 }
 .folder-add-btn {
     flex-shrink: 0;
-    margin-left: auto;
     width: 22px;
     height: 22px;
     display: flex;
@@ -1216,5 +1217,51 @@ button,
     }
     #terminalResizeHandle {
         display: none;
+    }
+}
+
+/* =========================
+   FILE ROW "..." MENU BUTTON
+   Explicit, always-visible way
+   to reach rename/delete/etc.
+   without relying on right-
+   click or long-press, which
+   can conflict with the row's
+   own drag-and-drop on some
+   devices.
+========================= */
+.file-menu-btn {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-faint);
+    opacity: 0;
+    transition: background var(--ease), color var(--ease), opacity var(--ease);
+}
+.file:hover .file-menu-btn,
+.file:focus-within .file-menu-btn,
+.file-menu-btn:focus-visible {
+    opacity: 1;
+}
+.file-menu-btn:hover {
+    background: var(--surface-active);
+    color: var(--text);
+}
+.file-menu-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+/* Touch devices have no hover, so keep it visible there
+   rather than hidden behind a gesture that will never fire */
+@media (hover: none) {
+    .file-menu-btn {
+        opacity: 0.7;
     }
 }
