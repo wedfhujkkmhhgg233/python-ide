@@ -108,6 +108,15 @@
         .logo-icon {
             font-size: 20px;
         }
+        #toolbarMoreWrap {
+            position: relative;
+        }
+        #moreToolbarBtn {
+            display: none;
+        }
+        #toolbarMore {
+            display: contents;
+        }
         button {
             border: 1px solid #30363d;
             border-radius: 6px;
@@ -728,6 +737,33 @@
                 padding: 8px 10px;
                 font-size: 12px;
             }
+            #moreToolbarBtn {
+                display: flex;
+            }
+            #toolbarMore {
+                display: none;
+                position: fixed;
+                top: 56px;
+                right: 7px;
+                flex-direction: column;
+                align-items: stretch;
+                background: #21262d;
+                border: 1px solid #30363d;
+                border-radius: 8px;
+                padding: 6px;
+                gap: 4px;
+                min-width: 190px;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+                z-index: 250;
+            }
+            #toolbarMore.show {
+                display: flex;
+            }
+            #toolbarMore button {
+                width: 100%;
+                text-align: left;
+                justify-content: flex-start;
+            }
             #hamburger {
                 display: flex;
             }
@@ -826,30 +862,49 @@
             Python IDE
         </span>
     </div>
-    <button
-        onclick="newProject()"
-        title="Create a new project"
-    >
-        ＋ Project
-    </button>
-    <button
-        onclick="newFile()"
-        title="Create a new file"
-    >
-        ＋ File
-    </button>
-    <button
-        onclick="newFolder()"
-        title="Create a new folder"
-    >
-        ＋ Folder
-    </button>
-    <button
-        onclick="triggerUpload('')"
-        title="Upload files - zips are auto-extracted"
-    >
-        ⬆ Upload
-    </button>
+    <div id="toolbarMoreWrap">
+        <button
+            id="moreToolbarBtn"
+            onclick="toggleMoreToolbarMenu()"
+            title="More actions"
+            aria-label="More actions"
+        >
+            ⋯
+        </button>
+        <div id="toolbarMore">
+            <button
+                onclick="hideMoreToolbarMenu(); newProject()"
+                title="Create a new project"
+            >
+                ＋ Project
+            </button>
+            <button
+                onclick="hideMoreToolbarMenu(); newFile()"
+                title="Create a new file"
+            >
+                ＋ File
+            </button>
+            <button
+                onclick="hideMoreToolbarMenu(); newFolder()"
+                title="Create a new folder"
+            >
+                ＋ Folder
+            </button>
+            <button
+                onclick="hideMoreToolbarMenu(); triggerUpload('')"
+                title="Upload files - zips are auto-extracted"
+            >
+                ⬆ Upload
+            </button>
+            <button
+                id="installButton"
+                onclick="hideMoreToolbarMenu(); installRequirements()"
+                title="pip install -r requirements.txt"
+            >
+                📦 Install
+            </button>
+        </div>
+    </div>
     <input
         type="file"
         id="uploadInput"
@@ -870,13 +925,6 @@
         title="Run current Python file in the terminal"
     >
         ▶ Run
-    </button>
-    <button
-        id="installButton"
-        onclick="installRequirements()"
-        title="pip install -r requirements.txt"
-    >
-        📦 Install
     </button>
 </header>
 <!-- =========================
@@ -2103,6 +2151,37 @@ function hideFileContextMenu() {
     contextMenuPath = null;
     contextMenuType = null;
 }
+/* =====================================================
+   HEADER "MORE ACTIONS" DROPDOWN (mobile)
+   New Project/File/Folder, Upload, and Install collapse
+   into this menu on narrow screens so Run and Save stay
+   reachable instead of getting pushed off-screen.
+===================================================== */
+const toolbarMoreEl = document.getElementById("toolbarMore");
+function toggleMoreToolbarMenu() {
+    toolbarMoreEl.classList.toggle(
+        "show"
+    );
+}
+function hideMoreToolbarMenu() {
+    toolbarMoreEl.classList.remove(
+        "show"
+    );
+}
+document.addEventListener(
+    "pointerdown",
+    (event) => {
+        if (
+            toolbarMoreEl.classList.contains("show") &&
+            !toolbarMoreEl.contains(event.target) &&
+            !document.getElementById("moreToolbarBtn").contains(
+                event.target
+            )
+        ) {
+            hideMoreToolbarMenu();
+        }
+    }
+);
 /*
  * Close the menu on any click/tap outside it, and on
  * scroll (so it doesn't float over the wrong file).
@@ -3635,62 +3714,4 @@ function startCameraCaptureLoop() {
                 if (
                     blob &&
                     cameraSocket &&
-                    cameraSocket.readyState ===
-                        WebSocket.OPEN
-                ) {
-                    cameraFramesInFlight++;
-                    cameraSocket.send(blob);
-                }
-            },
-            "image/jpeg",
-            0.5
-        );
-    }, 350);
-}
-function stopCamera(statusTitle) {
-    cameraRunning = false;
-    clearInterval(cameraCaptureTimer);
-    cameraCaptureTimer = null;
-    clearInterval(cameraFpsTimer);
-    cameraFpsTimer = null;
-    cameraFpsEl.classList.remove("show");
-    if (cameraSocket) {
-        try {
-            cameraSocket.onclose = null;
-            cameraSocket.close();
-        } catch {}
-        cameraSocket = null;
-    }
-    if (cameraStream) {
-        cameraStream
-            .getTracks()
-            .forEach((track) => track.stop());
-        cameraStream = null;
-    }
-    cameraVideoEl.srcObject = null;
-    cameraStartBtn.disabled = false;
-    cameraStartBtn.textContent = "▶ Start";
-    cameraDisplayCanvas.classList.remove("show");
-    cameraPlaceholder.classList.remove("hide");
-    setCameraStatus(
-        "disconnected",
-        statusTitle || "Stopped"
-    );
-}
-function switchCameraFacing() {
-    cameraFacingMode =
-        cameraFacingMode === "environment"
-            ? "user"
-            : "environment";
-    if (cameraRunning) {
-        stopCamera(null);
-        startCamera();
-    }
-}
-/* =====================================================
-   START APPLICATION
-===================================================== */
-loadProjects();
-</script>
-</body>
-</html>
+     
