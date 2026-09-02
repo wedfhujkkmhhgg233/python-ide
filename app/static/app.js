@@ -100,6 +100,52 @@ cm.on(
         }
     }
 );
+/* =====================================================
+   STATUS BAR
+   Reflects real state only - language comes from the
+   open file's extension, position comes from
+   CodeMirror's actual cursor. Nothing here is faked.
+===================================================== */
+const statusLangEl = document.getElementById("statusLang");
+const statusPosEl = document.getElementById("statusPos");
+const STATUS_LANGUAGE_BY_EXT = {
+    py: "Python",
+    js: "JavaScript",
+    json: "JSON",
+    md: "Markdown",
+    txt: "Plain Text",
+    html: "HTML",
+    css: "CSS",
+    sh: "Shell",
+    yml: "YAML",
+    yaml: "YAML",
+    toml: "TOML",
+    cfg: "Config",
+    ini: "Config"
+};
+function updateStatusLine(path) {
+    if (!statusLangEl) {
+        return;
+    }
+    if (!path) {
+        statusLangEl.textContent = "No file";
+        return;
+    }
+    const dot = path.lastIndexOf(".");
+    const ext =
+        dot >= 0 ? path.slice(dot + 1).toLowerCase() : "";
+    statusLangEl.textContent =
+        STATUS_LANGUAGE_BY_EXT[ext] || "Plain Text";
+}
+function refreshCursorStatus() {
+    if (!statusPosEl) {
+        return;
+    }
+    const pos = cm.getCursor();
+    statusPosEl.textContent =
+        "Ln " + (pos.line + 1) + ", Col " + (pos.ch + 1);
+}
+cm.on("cursorActivity", refreshCursorStatus);
 const output = document.getElementById("output");
 
 /* =====================================================
@@ -1116,6 +1162,7 @@ async function renameSelectedFile() {
         ) {
             currentFile = newPath;
             filename.textContent = newPath;
+            updateStatusLine(newPath);
         }
         else if (
             type === "folder" &&
@@ -1125,6 +1172,7 @@ async function renameSelectedFile() {
             currentFile =
                 newPath + currentFile.slice(oldPath.length);
             filename.textContent = currentFile;
+            updateStatusLine(currentFile);
         }
         if (type === "folder") {
             expandedFolders.delete(oldPath);
@@ -1195,6 +1243,7 @@ async function deleteSelectedFile() {
             );
             editor.dataset.saved = "";
             filename.textContent = "No file selected";
+            updateStatusLine(null);
             dirtyIndicator.style.display = "none";
         }
         expandedFolders.delete(path);
@@ -1274,6 +1323,46 @@ async function api(
     return data;
 }
 /* =====================================================
+   EXPLORER STATE (empty / error / loading)
+   One shared renderer so "no files", "couldn't load",
+   and "starting up" all look and behave consistently
+   instead of three different one-off DOM blocks.
+===================================================== */
+function renderExplorerState(container, options) {
+    container.innerHTML = "";
+    const wrap = document.createElement("div");
+    wrap.className = "explorer-state";
+    if (options.icon) {
+        const iconWrap = document.createElement("span");
+        iconWrap.className = "explorer-state-icon";
+        iconWrap.setAttribute("aria-hidden", "true");
+        iconWrap.innerHTML =
+            '<svg class="icon icon-lg"><use href="#i-' +
+            options.icon +
+            '"></use></svg>';
+        wrap.appendChild(iconWrap);
+    }
+    const title = document.createElement("div");
+    title.className = "explorer-state-title";
+    title.textContent = options.title;
+    wrap.appendChild(title);
+    if (options.message) {
+        const msg = document.createElement("div");
+        msg.className = "explorer-state-message";
+        msg.textContent = options.message;
+        wrap.appendChild(msg);
+    }
+    if (options.retry) {
+        const retryBtn = document.createElement("button");
+        retryBtn.className = "explorer-state-retry";
+        retryBtn.innerHTML =
+            '<svg class="icon"><use href="#i-refresh"></use></svg> Retry';
+        retryBtn.onclick = options.retry;
+        wrap.appendChild(retryBtn);
+    }
+    container.appendChild(wrap);
+}
+/* =====================================================
    LOAD PROJECTS
 ===================================================== */
 async function loadProjects() {
@@ -1332,29 +1421,12 @@ async function loadProjects() {
             document.getElementById(
                 "files"
             );
-        container.innerHTML = "";
-        const errorBox =
-            document.createElement(
-                "div"
-            );
-        errorBox.className = "empty-files";
-        errorBox.style.color = "#f85149";
-        errorBox.textContent =
-            "⚠ " + error.message;
-        const retryBtn =
-            document.createElement(
-                "button"
-            );
-        retryBtn.textContent = "↻ Retry";
-        retryBtn.style.marginTop = "8px";
-        retryBtn.style.width = "100%";
-        retryBtn.onclick = loadProjects;
-        container.appendChild(
-            errorBox
-        );
-        container.appendChild(
-            retryBtn
-        );
+        renderExplorerState(container, {
+            icon: "alert",
+            title: "Couldn't start up",
+            message: error.message,
+            retry: loadProjects
+        });
     }
 }
 /* =====================================================
@@ -1486,6 +1558,7 @@ async function switchProject() {
     );
     editor.dataset.saved = "";
     filename.textContent = "No file selected";
+    updateStatusLine(null);
     dirtyIndicator.style.display = "none";
     await loadFiles();
     if (bottomTab === "terminal") {
@@ -1507,18 +1580,18 @@ async function loadFiles() {
                 )}/files`
             );
         const container = document.getElementById("files");
-        container.innerHTML = "";
         if (
             data.tree.length === 0
         ) {
-            container.innerHTML =
-                `
-                <div class="empty-files">
-                    No files.
-                </div>
-                `;
+            renderExplorerState(container, {
+                icon: "folder",
+                title: "No files yet",
+                message: "Create a file or folder to get started.",
+                retry: null
+            });
         }
         else {
+            container.innerHTML = "";
             renderTree(
                 data.tree,
                 container,
@@ -1546,29 +1619,12 @@ async function loadFiles() {
             document.getElementById(
                 "files"
             );
-        container.innerHTML = "";
-        const errorBox =
-            document.createElement(
-                "div"
-            );
-        errorBox.className = "empty-files";
-        errorBox.style.color = "#f85149";
-        errorBox.textContent =
-            "⚠ " + error.message;
-        const retryBtn =
-            document.createElement(
-                "button"
-            );
-        retryBtn.textContent = "↻ Retry";
-        retryBtn.style.marginTop = "8px";
-        retryBtn.style.width = "100%";
-        retryBtn.onclick = loadFiles;
-        container.appendChild(
-            errorBox
-        );
-        container.appendChild(
-            retryBtn
-        );
+        renderExplorerState(container, {
+            icon: "alert",
+            title: "Unable to load files",
+            message: error.message,
+            retry: loadFiles
+        });
     }
 }
 /* =====================================================
@@ -1790,11 +1846,11 @@ function renderFileRow(
         document.createElement(
             "span"
         );
-    icon.className = "file-icon";
-    icon.textContent =
-        node.name.endsWith(".py")
-            ? "🐍"
-            : "📄";
+    const isPython = node.name.endsWith(".py");
+    icon.className =
+        "file-icon" + (isPython ? " file-icon-py" : "");
+    icon.innerHTML =
+        '<svg class="icon"><use href="#i-file"></use></svg>';
     const name =
         document.createElement(
             "span"
@@ -1840,16 +1896,17 @@ function renderFolderRow(
         document.createElement(
             "span"
         );
-    arrow.className = "folder-arrow";
-    arrow.textContent =
-        isOpen ? "▾" : "▸";
+    arrow.className =
+        "folder-arrow" + (isOpen ? " open" : "");
+    arrow.innerHTML =
+        '<svg class="icon"><use href="#i-chevron"></use></svg>';
     const icon =
         document.createElement(
             "span"
         );
     icon.className = "file-icon";
-    icon.textContent =
-        isOpen ? "📂" : "📁";
+    icon.innerHTML =
+        '<svg class="icon"><use href="#i-folder"></use></svg>';
     const name =
         document.createElement(
             "span"
@@ -2070,6 +2127,7 @@ async function moveEntry(
         ) {
             currentFile = newPath;
             filename.textContent = newPath;
+            updateStatusLine(newPath);
         }
         else if (
             type === "folder" &&
@@ -2079,6 +2137,7 @@ async function moveEntry(
             currentFile =
                 newPath + currentFile.slice(oldPath.length);
             filename.textContent = currentFile;
+            updateStatusLine(currentFile);
         }
         if (type === "folder") {
             expandedFolders.delete(oldPath);
@@ -2135,6 +2194,7 @@ async function openFile(
         );
         editor.dataset.saved = data.content;
         filename.textContent = path;
+        updateStatusLine(path);
         dirtyIndicator.style.display = "none";
         /*
          * On mobile, opening a file should close the
@@ -2594,7 +2654,9 @@ async function startCamera() {
     cameraSocket.onopen = () => {
         cameraRunning = true;
         cameraStartBtn.disabled = false;
-        cameraStartBtn.textContent = "⏹ Stop";
+        cameraStartBtn.innerHTML =
+            '<span class="btn-icon"><svg class="icon"><use href="#i-square"></use></svg></span>' +
+            '<span class="btn-label">Stop</span>';
         setCameraStatus("connected", "Streaming");
         cameraPlaceholder.classList.add("hide");
         cameraDisplayCanvas.classList.add("show");
@@ -2724,7 +2786,9 @@ function stopCamera(reason) {
     }
     cameraVideoEl.srcObject = null;
     cameraStartBtn.disabled = false;
-    cameraStartBtn.textContent = "▶ Start";
+    cameraStartBtn.innerHTML =
+        '<span class="btn-icon"><svg class="icon"><use href="#i-play"></use></svg></span>' +
+        '<span class="btn-label">Start</span>';
     cameraDisplayCanvas.classList.remove("show");
     cameraFpsEl.classList.remove("show");
     cameraPlaceholder.classList.remove("hide");
@@ -2740,6 +2804,152 @@ function switchCameraFacing() {
         stopCamera("Switching camera...");
         startCamera();
     }
+}
+
+/* =====================================================
+   TERMINAL PANEL RESIZE (desktop)
+   Drag the handle above the terminal to resize it.
+   Persisted for this tab only (sessionStorage), and
+   only applies on desktop - mobile already manages the
+   terminal's height itself via data-mobile-view.
+===================================================== */
+const terminalResizeHandle = document.getElementById(
+    "terminalResizeHandle"
+);
+const terminalEl = document.getElementById("terminal");
+const TERMINAL_MIN_HEIGHT = 120;
+function applyTerminalHeight(px) {
+    const maxHeight = Math.max(
+        TERMINAL_MIN_HEIGHT,
+        window.innerHeight - 200
+    );
+    const clamped = Math.min(
+        Math.max(px, TERMINAL_MIN_HEIGHT),
+        maxHeight
+    );
+    terminalEl.style.height = clamped + "px";
+    if (bottomTab === "terminal" && fitAddon) {
+        try {
+            fitAddon.fit();
+        } catch {}
+        sendTermResize();
+    }
+    return clamped;
+}
+(function setUpTerminalResize() {
+    const saved = sessionStorage.getItem(
+        "ide-terminal-height"
+    );
+    if (saved && !isMobile()) {
+        applyTerminalHeight(parseInt(saved, 10));
+    }
+    if (!terminalResizeHandle) {
+        return;
+    }
+    let dragging = false;
+    let startY = 0;
+    let startHeight = 0;
+    function onMove(clientY) {
+        const delta = startY - clientY;
+        const next = applyTerminalHeight(
+            startHeight + delta
+        );
+        sessionStorage.setItem(
+            "ide-terminal-height",
+            String(next)
+        );
+    }
+    terminalResizeHandle.addEventListener(
+        "pointerdown",
+        (event) => {
+            if (isMobile()) {
+                return;
+            }
+            dragging = true;
+            startY = event.clientY;
+            startHeight = terminalEl.getBoundingClientRect().height;
+            terminalResizeHandle.setPointerCapture(
+                event.pointerId
+            );
+        }
+    );
+    terminalResizeHandle.addEventListener(
+        "pointermove",
+        (event) => {
+            if (!dragging) {
+                return;
+            }
+            onMove(event.clientY);
+        }
+    );
+    ["pointerup", "pointercancel"].forEach((evt) => {
+        terminalResizeHandle.addEventListener(evt, () => {
+            dragging = false;
+        });
+    });
+    /* Keyboard resize for accessibility (arrow keys) */
+    terminalResizeHandle.addEventListener(
+        "keydown",
+        (event) => {
+            if (isMobile()) {
+                return;
+            }
+            const current = terminalEl.getBoundingClientRect()
+                .height;
+            if (event.key === "ArrowUp") {
+                event.preventDefault();
+                const next = applyTerminalHeight(current + 20);
+                sessionStorage.setItem(
+                    "ide-terminal-height",
+                    String(next)
+                );
+            }
+            else if (event.key === "ArrowDown") {
+                event.preventDefault();
+                const next = applyTerminalHeight(current - 20);
+                sessionStorage.setItem(
+                    "ide-terminal-height",
+                    String(next)
+                );
+            }
+        }
+    );
+})();
+
+/* =====================================================
+   MOBILE CODING TOOLBAR
+   Inserts characters at CodeMirror's actual cursor
+   position (or wraps the current selection for paired
+   characters) - not a fake overlay, this talks straight
+   to the same `cm` instance the rest of the app uses.
+===================================================== */
+function mobileInsertText(text) {
+    cm.replaceSelection(text, "end");
+    cm.focus();
+}
+function mobileInsertPair(open, close) {
+    if (cm.somethingSelected()) {
+        const selected = cm.getSelection();
+        cm.replaceSelection(
+            open + selected + close,
+            "around"
+        );
+    }
+    else {
+        const pos = cm.getCursor();
+        cm.replaceSelection(open + close, "start");
+        cm.setCursor({
+            line: pos.line,
+            ch: pos.ch + open.length
+        });
+    }
+    cm.focus();
+}
+function mobileMoveCursor(delta) {
+    const pos = cm.getCursor();
+    const newCh = Math.max(0, pos.ch + delta);
+    cm.setCursor({ line: pos.line, ch: newCh });
+    cm.focus();
 }
 
 /* =====================================================
