@@ -141,63 +141,90 @@ async def db_init_pool():
         )
         return
 
-    db_pool = await asyncpg.create_pool(
-        _sanitize_dsn_for_asyncpg(DATABASE_URL),
-        min_size=1, max_size=5
-    )
-
-    async with db_pool.acquire() as conn:
-
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            );
-            """
+    # A slow-to-wake or unreachable database must never take the
+    # whole app down with it. If this doesn't succeed quickly,
+    # the app still starts and serves projects from local disk -
+    # they just won't be persisted until the DB comes back (the
+    # next successful write, or the next restart's restore,
+    # picks back up normally).
+    try:
+        db_pool = await asyncio.wait_for(
+            asyncpg.create_pool(
+                _sanitize_dsn_for_asyncpg(DATABASE_URL),
+                min_size=1, max_size=5
+            ),
+            timeout=10
         )
 
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS project_files (
-                project_id TEXT NOT NULL REFERENCES
-                    projects(id) ON DELETE CASCADE,
-                path TEXT NOT NULL,
-                content TEXT NOT NULL,
-                is_binary BOOLEAN NOT NULL DEFAULT false,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                PRIMARY KEY (project_id, path)
-            );
-            """
+        async with db_pool.acquire() as conn:
+
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                """
+            )
+
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS project_files (
+                    project_id TEXT NOT NULL REFERENCES
+                        projects(id) ON DELETE CASCADE,
+                    path TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    is_binary BOOLEAN NOT NULL DEFAULT false,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    PRIMARY KEY (project_id, path)
+                );
+                """
+            )
+
+            # Explicit folder tracking. Folders that contain
+            # files are already implied by project_files.path,
+            # but an *empty* folder has no file to imply it, so
+            # it needs its own row or it would vanish on
+            # restart / resync.
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS project_folders (
+                    project_id TEXT NOT NULL REFERENCES
+                        projects(id) ON DELETE CASCADE,
+                    path TEXT NOT NULL,
+                    PRIMARY KEY (project_id, path)
+                );
+                """
+            )
+
+            # Upgrading an existing deployment that predates
+            # binary file support - add the column if it isn't
+            # there yet.
+            await conn.execute(
+                """
+                ALTER TABLE project_files
+                ADD COLUMN IF NOT EXISTS is_binary
+                    BOOLEAN NOT NULL DEFAULT false;
+                """
+            )
+
+        print("Connected to the database.")
+
+    except Exception as error:
+
+        print(
+            "Could not connect to the database within 10s - "
+            f"continuing without persistence for now: {error}"
         )
 
-        # Explicit folder tracking. Folders that contain files are
-        # already implied by project_files.path, but an *empty*
-        # folder has no file to imply it, so it needs its own row
-        # or it would vanish on restart / resync.
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS project_folders (
-                project_id TEXT NOT NULL REFERENCES
-                    projects(id) ON DELETE CASCADE,
-                path TEXT NOT NULL,
-                PRIMARY KEY (project_id, path)
-            );
-            """
-        )
+        if db_pool is not None:
+            try:
+                await db_pool.close()
+            except Exception:
+                pass
 
-        # Upgrading an existing deployment that predates binary
-        # file support - add the column if it isn't there yet.
-        await conn.execute(
-            """
-            ALTER TABLE project_files
-            ADD COLUMN IF NOT EXISTS is_binary
-                BOOLEAN NOT NULL DEFAULT false;
-            """
-        )
-
-    print("Connected to the database.")
+        db_pool = None
 
 
 async def db_restore_projects_to_disk():
@@ -205,72 +232,97 @@ async def db_restore_projects_to_disk():
     if db_pool is None:
         return
 
-    async with db_pool.acquire() as conn:
+    # Same principle as db_init_pool: this runs once at startup,
+    # before the app can serve any requests, so it must not be
+    # able to hang or crash the whole app - a slow query or a
+    # connection blip here would otherwise take Render's health
+    # check down with it, and the deploy would never go live.
+    try:
+        async with asyncio.timeout(20):
 
-        projects = await conn.fetch("SELECT id FROM projects")
+            async with db_pool.acquire() as conn:
 
-        for row in projects:
-
-            project_id = row["id"]
-
-            try:
-                folder = project_path(project_id)
-            except ValueError:
-                continue
-
-            folder.mkdir(parents=True, exist_ok=True)
-
-            # Folders first (so empty ones exist even if no file
-            # ever gets written into them), then files.
-            folder_rows = await conn.fetch(
-                "SELECT path FROM project_folders "
-                "WHERE project_id = $1",
-                project_id
-            )
-
-            for folder_row in folder_rows:
-
-                try:
-                    relative = safe_relative_path(
-                        folder_row["path"]
-                    )
-                except ValueError:
-                    continue
-
-                (folder / relative).mkdir(
-                    parents=True, exist_ok=True
+                projects = await conn.fetch(
+                    "SELECT id FROM projects"
                 )
 
-            files = await conn.fetch(
-                "SELECT path, content, is_binary "
-                "FROM project_files WHERE project_id = $1",
-                project_id
+                for row in projects:
+
+                    project_id = row["id"]
+
+                    try:
+                        folder = project_path(project_id)
+                    except ValueError:
+                        continue
+
+                    folder.mkdir(parents=True, exist_ok=True)
+
+                    # Folders first (so empty ones exist even
+                    # if no file ever gets written into them),
+                    # then files.
+                    folder_rows = await conn.fetch(
+                        "SELECT path FROM project_folders "
+                        "WHERE project_id = $1",
+                        project_id
+                    )
+
+                    for folder_row in folder_rows:
+
+                        try:
+                            relative = safe_relative_path(
+                                folder_row["path"]
+                            )
+                        except ValueError:
+                            continue
+
+                        (folder / relative).mkdir(
+                            parents=True, exist_ok=True
+                        )
+
+                    files = await conn.fetch(
+                        "SELECT path, content, is_binary "
+                        "FROM project_files WHERE project_id = $1",
+                        project_id
+                    )
+
+                    for file_row in files:
+
+                        try:
+                            relative = safe_relative_path(
+                                file_row["path"]
+                            )
+                        except ValueError:
+                            continue
+
+                        target = folder / relative
+                        target.parent.mkdir(
+                            parents=True, exist_ok=True
+                        )
+
+                        if file_row["is_binary"]:
+                            target.write_bytes(
+                                base64.b64decode(
+                                    file_row["content"]
+                                )
+                            )
+                        else:
+                            target.write_text(
+                                file_row["content"],
+                                encoding="utf-8"
+                            )
+
+            print(
+                f"Restored {len(projects)} project(s) "
+                "from the database."
             )
 
-            for file_row in files:
+    except Exception as error:
 
-                try:
-                    relative = safe_relative_path(
-                        file_row["path"]
-                    )
-                except ValueError:
-                    continue
-
-                target = folder / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-
-                if file_row["is_binary"]:
-                    target.write_bytes(
-                        base64.b64decode(file_row["content"])
-                    )
-                else:
-                    target.write_text(
-                        file_row["content"], encoding="utf-8"
-                    )
-
-    print(
-        f"Restored {len(projects)} project(s) from the database."
-    )
+        print(
+            "Restoring projects from the database failed or "
+            f"timed out - starting with an empty workspace "
+            f"instead of blocking startup: {error}"
+        )
 
 
 async def db_save_project(project_id: str, name: str):
