@@ -3701,4 +3701,110 @@ function renderQuickPickerList() {
             item.icon +
             '"></use></svg>';
         const labelEl = document.createElement("span");
-        labelEl.className = "quick-picker
+        labelEl.className = "quick-picker-item-label";
+        labelEl.textContent = item.label;
+        row.appendChild(iconEl);
+        row.appendChild(labelEl);
+        if (item.shortcut) {
+            const shortcutEl =
+                document.createElement("span");
+            shortcutEl.className =
+                "quick-picker-item-shortcut";
+            shortcutEl.textContent = item.shortcut;
+            row.appendChild(shortcutEl);
+        }
+        row.addEventListener(
+            "mousedown",
+            (event) => {
+                /*
+                 * mousedown (not click) fires before the
+                 * input's blur would otherwise close the
+                 * picker first and swallow the selection.
+                 */
+                event.preventDefault();
+                runQuickPickerItem(index);
+            }
+        );
+        quickPickerListEl.appendChild(row);
+    });
+}
+function runQuickPickerItem(index) {
+    const item = quickPickerFiltered[index];
+    if (!item) {
+        return;
+    }
+    closeQuickPicker();
+    item.action();
+}
+function moveQuickPickerSelection(delta) {
+    if (quickPickerFiltered.length === 0) {
+        return;
+    }
+    quickPickerActiveIndex =
+        (quickPickerActiveIndex +
+            delta +
+            quickPickerFiltered.length) %
+        quickPickerFiltered.length;
+    renderQuickPickerList();
+    const activeEl =
+        quickPickerListEl.children[quickPickerActiveIndex];
+    if (activeEl) {
+        activeEl.scrollIntoView({ block: "nearest" });
+    }
+}
+function openCommandPalette() {
+    openQuickPicker("command");
+}
+function openFileSwitcher() {
+    openQuickPicker("file");
+}
+quickPickerInput.addEventListener("input", (event) => {
+    filterQuickPicker(event.target.value);
+});
+quickPickerInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveQuickPickerSelection(1);
+    }
+    else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveQuickPickerSelection(-1);
+    }
+    else if (event.key === "Enter") {
+        event.preventDefault();
+        runQuickPickerItem(quickPickerActiveIndex);
+    }
+    else if (event.key === "Escape") {
+        event.preventDefault();
+        closeQuickPicker();
+    }
+});
+quickPickerEl.addEventListener("mousedown", (event) => {
+    if (event.target === quickPickerEl) {
+        closeQuickPicker();
+    }
+});
+document.addEventListener("keydown", (event) => {
+    const mod = event.ctrlKey || event.metaKey;
+    if (!mod) {
+        return;
+    }
+    const key = event.key.toLowerCase();
+    if (key === "p" && event.shiftKey) {
+        event.preventDefault();
+        openCommandPalette();
+    }
+    else if (key === "p") {
+        event.preventDefault();
+        openFileSwitcher();
+    }
+});
+
+/* =====================================================
+   BOOTSTRAP
+   Kicks the whole app off - loads (or creates) a
+   project and populates the file tree. Everything else
+   (Run, Save, the terminal, etc.) is inert until this
+   has set currentProject.
+===================================================== */
+loadProjects();
