@@ -4,6 +4,7 @@
 let currentProject = null;
 let currentProjectFiles = [];
 let currentFile = null;
+let openFiles = [];
 let expandedFolders = new Set();
 let dragPath = null;
 let dragType = null;
@@ -66,6 +67,11 @@ const cm =
             autoCloseBrackets: true,
             styleActiveLine: true,
             lineWrapping: false,
+            foldGutter: true,
+            gutters: [
+                "CodeMirror-linenumbers",
+                "CodeMirror-foldgutter"
+            ],
             extraKeys: {
                 "Tab": function(instance) {
                     if (
@@ -83,13 +89,37 @@ const cm =
                     }
                 },
                 "Ctrl-Shift-K": deleteCurrentLines,
-                "Cmd-Shift-K": deleteCurrentLines
+                "Cmd-Shift-K": deleteCurrentLines,
+                "Ctrl-Q": function(instance) {
+                    instance.foldCode(instance.getCursor());
+                },
+                "Cmd-Alt-Q": function(instance) {
+                    instance.foldCode(instance.getCursor());
+                },
+                "Ctrl-F": function() {
+                    openFindPanel(false);
+                },
+                "Cmd-F": function() {
+                    openFindPanel(false);
+                },
+                "Ctrl-H": function() {
+                    openFindPanel(true);
+                },
+                "Cmd-Alt-F": function() {
+                    openFindPanel(true);
+                }
             }
         }
     );
 cm.on(
     "change",
     function() {
+        if (currentFile) {
+            const activeEntry = findOpenFile(currentFile);
+            if (activeEntry) {
+                activeEntry.content = cm.getValue();
+            }
+        }
         if (
             cm.getValue() !==
             editor.dataset.saved
@@ -99,6 +129,7 @@ cm.on(
         else {
             dirtyIndicator.style.display = "none";
         }
+        updateActiveTabDirtyClass();
     }
 );
 /* =====================================================
@@ -1153,28 +1184,14 @@ async function renameSelectedFile() {
             }
         );
         /*
-         * If the renamed file is the one currently open,
-         * keep the editor pointed at its new name/path -
-         * and if a whole folder was renamed and the open
-         * file lived inside it, update its prefix too.
+         * Keep every open tab pointed at its file's new
+         * path - not just the active one.
          */
-        if (
-            currentFile === oldPath
-        ) {
-            currentFile = newPath;
-            filename.textContent = newPath;
-            updateStatusLine(newPath);
-        }
-        else if (
-            type === "folder" &&
-            currentFile &&
-            currentFile.startsWith(oldPath + "/")
-        ) {
-            currentFile =
-                newPath + currentFile.slice(oldPath.length);
-            filename.textContent = currentFile;
-            updateStatusLine(currentFile);
-        }
+        renamePathsInOpenFiles(
+            oldPath,
+            newPath,
+            type === "folder"
+        );
         if (type === "folder") {
             expandedFolders.delete(oldPath);
             expandedFolders.add(newPath);
@@ -1224,29 +1241,13 @@ async function deleteSelectedFile() {
             }
         );
         /*
-         * If the deleted file (or a file inside the deleted
-         * folder) was open in the editor, clear it out so we
-         * don't keep editing something that no longer exists.
+         * Close every open tab that lived at or under the
+         * deleted path, not just the active one.
          */
-        const openFileWasDeleted =
-            currentFile === path ||
-            (
-                type === "folder" &&
-                currentFile &&
-                currentFile.startsWith(path + "/")
-            );
-        if (
-            openFileWasDeleted
-        ) {
-            currentFile = null;
-            cm.setValue(
-                ""
-            );
-            editor.dataset.saved = "";
-            filename.textContent = "No file selected";
-            updateStatusLine(null);
-            dirtyIndicator.style.display = "none";
-        }
+        removePathsFromOpenFiles(
+            path,
+            type === "folder"
+        );
         expandedFolders.delete(path);
         await loadFiles();
     }
@@ -1504,6 +1505,8 @@ async function newProject() {
             );
         currentProject = data.id;
         currentFile = null;
+        openFiles = [];
+        renderTabs();
         await loadProjects();
         projectSelect.value = data.id;
         currentProject = data.id;
@@ -1530,37 +1533,38 @@ async function switchProject() {
     if (!selected) {
         return;
     }
-    /*
-     * Warn about unsaved changes.
-     */
-    if (
-        currentFile &&
-        cm.getValue() !==
-        editor.dataset.saved
-    ) {
+    captureActiveTabContent();
+    const dirtyEntries = openFiles.filter(isFileDirty);
+    if (dirtyEntries.length > 0) {
         const save =
             confirm(
-                "You have unsaved changes.\n\n" +
-                "Save them before switching?"
+                "You have unsaved changes in " +
+                dirtyEntries.length +
+                (dirtyEntries.length > 1 ? " files" : " file") +
+                ".\n\nSave them before switching?"
             );
         if (save) {
             try {
-                await saveFile();
+                for (const entry of dirtyEntries) {
+                    await saveFileToServer(
+                        entry.path,
+                        entry.content
+                    );
+                    entry.savedContent = entry.content;
+                }
             }
             catch (error) {
+                output.textContent =
+                    "Save failed:\n" +
+                    error.message;
                 return;
             }
         }
     }
     currentProject = selected;
-    currentFile = null;
-    cm.setValue(
-        ""
-    );
-    editor.dataset.saved = "";
-    filename.textContent = "No file selected";
-    updateStatusLine(null);
-    dirtyIndicator.style.display = "none";
+    openFiles = [];
+    clearEditorForNoFile();
+    renderTabs();
     await loadFiles();
     if (bottomTab === "terminal") {
         ensureTerminalConnected();
@@ -1897,6 +1901,10 @@ function renderFileRow(
             "active"
         );
     }
+    const openEntry = findOpenFile(node.path);
+    if (openEntry) {
+        item.classList.add("file-open");
+    }
     item.style.paddingLeft =
         (depth * 16 + 8) + "px";
     const icon =
@@ -1920,6 +1928,12 @@ function renderFileRow(
     item.appendChild(
         name
     );
+    if (openEntry && isFileDirty(openEntry)) {
+        const dot = document.createElement("span");
+        dot.className = "file-row-dirty-dot";
+        dot.title = "Unsaved changes";
+        item.appendChild(dot);
+    }
     item.appendChild(
         createRowMenuButton(node.path, "file")
     );
@@ -2186,23 +2200,11 @@ async function moveEntry(
                     })
             }
         );
-        if (
-            currentFile === oldPath
-        ) {
-            currentFile = newPath;
-            filename.textContent = newPath;
-            updateStatusLine(newPath);
-        }
-        else if (
-            type === "folder" &&
-            currentFile &&
-            currentFile.startsWith(oldPath + "/")
-        ) {
-            currentFile =
-                newPath + currentFile.slice(oldPath.length);
-            filename.textContent = currentFile;
-            updateStatusLine(currentFile);
-        }
+        renamePathsInOpenFiles(
+            oldPath,
+            newPath,
+            type === "folder"
+        );
         if (type === "folder") {
             expandedFolders.delete(oldPath);
             expandedFolders.add(newPath);
@@ -2216,32 +2218,529 @@ async function moveEntry(
     }
 }
 /* =====================================================
+   FIND / REPLACE
+   Uses CodeMirror's real searchcursor addon for the
+   actual matching - this just supplies a UI that matches
+   the rest of the app instead of the addon's default
+   unstyled dialog. Matches are tracked as CodeMirror
+   TextMarkers so navigation stays correct even if you
+   edit the document while the panel is open.
+===================================================== */
+const findPanelEl = document.getElementById("findPanel");
+const findInputEl = document.getElementById("findInput");
+const findCountEl = document.getElementById("findCount");
+const findReplaceRowEl = document.getElementById(
+    "findReplaceRow"
+);
+const replaceInputEl = document.getElementById(
+    "replaceInput"
+);
+let findMarks = [];
+let findActiveIndex = -1;
+function clearFindHighlights() {
+    findMarks.forEach((mark) => mark.clear());
+    findMarks = [];
+}
+function updateFindCount() {
+    findCountEl.textContent =
+        findMarks.length === 0 ?
+            "0/0" :
+            (findActiveIndex + 1) + "/" + findMarks.length;
+}
+function jumpToMatch(index) {
+    const mark = findMarks[index];
+    if (!mark) {
+        return;
+    }
+    const pos = mark.find();
+    if (!pos) {
+        return;
+    }
+    cm.setSelection(pos.from, pos.to);
+    cm.scrollIntoView(pos, 60);
+}
+function runFind(query) {
+    clearFindHighlights();
+    findActiveIndex = -1;
+    if (!query) {
+        updateFindCount();
+        return;
+    }
+    const cursor = cm.getSearchCursor(
+        query,
+        { line: 0, ch: 0 },
+        { caseFold: true }
+    );
+    while (cursor.findNext()) {
+        findMarks.push(
+            cm.markText(
+                cursor.from(),
+                cursor.to(),
+                { className: "cm-find-match" }
+            )
+        );
+    }
+    if (findMarks.length > 0) {
+        findActiveIndex = 0;
+        jumpToMatch(0);
+    }
+    updateFindCount();
+}
+function findNext() {
+    if (findMarks.length === 0) {
+        return;
+    }
+    findActiveIndex =
+        (findActiveIndex + 1) % findMarks.length;
+    jumpToMatch(findActiveIndex);
+    updateFindCount();
+}
+function findPrev() {
+    if (findMarks.length === 0) {
+        return;
+    }
+    findActiveIndex =
+        (findActiveIndex - 1 + findMarks.length) %
+        findMarks.length;
+    jumpToMatch(findActiveIndex);
+    updateFindCount();
+}
+function replaceOne() {
+    if (
+        findActiveIndex === -1 ||
+        !findMarks[findActiveIndex]
+    ) {
+        return;
+    }
+    const mark = findMarks[findActiveIndex];
+    const pos = mark.find();
+    if (!pos) {
+        /* Stale mark (edited away) - just move on */
+        findMarks.splice(findActiveIndex, 1);
+        updateFindCount();
+        return;
+    }
+    mark.clear();
+    cm.replaceRange(
+        replaceInputEl.value,
+        pos.from,
+        pos.to
+    );
+    findMarks.splice(findActiveIndex, 1);
+    if (findMarks.length === 0) {
+        findActiveIndex = -1;
+    }
+    else {
+        findActiveIndex =
+            findActiveIndex % findMarks.length;
+        jumpToMatch(findActiveIndex);
+    }
+    updateFindCount();
+}
+function replaceAll() {
+    const query = findInputEl.value;
+    if (!query) {
+        return;
+    }
+    const replacement = replaceInputEl.value;
+    cm.operation(() => {
+        const cursor = cm.getSearchCursor(
+            query,
+            { line: 0, ch: 0 },
+            { caseFold: true }
+        );
+        while (cursor.findNext()) {
+            cursor.replace(replacement);
+        }
+    });
+    runFind(query);
+}
+function openFindPanel(withReplace) {
+    findPanelEl.hidden = false;
+    findReplaceRowEl.hidden = !withReplace;
+    if (cm.somethingSelected()) {
+        findInputEl.value = cm.getSelection();
+    }
+    findInputEl.focus();
+    findInputEl.select();
+    runFind(findInputEl.value);
+}
+function closeFindPanel() {
+    findPanelEl.hidden = true;
+    clearFindHighlights();
+    findActiveIndex = -1;
+    updateFindCount();
+    cm.focus();
+}
+function toggleFindReplaceRow() {
+    findReplaceRowEl.hidden = !findReplaceRowEl.hidden;
+    if (!findReplaceRowEl.hidden) {
+        replaceInputEl.focus();
+    }
+}
+findInputEl.addEventListener("input", (event) => {
+    runFind(event.target.value);
+});
+findInputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+        event.preventDefault();
+        if (event.shiftKey) {
+            findPrev();
+        }
+        else {
+            findNext();
+        }
+    }
+    else if (event.key === "Escape") {
+        event.preventDefault();
+        closeFindPanel();
+    }
+});
+replaceInputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+        event.preventDefault();
+        replaceOne();
+    }
+    else if (event.key === "Escape") {
+        event.preventDefault();
+        closeFindPanel();
+    }
+});
+document.addEventListener("keydown", (event) => {
+    const mod = event.ctrlKey || event.metaKey;
+    if (!mod) {
+        return;
+    }
+    const key = event.key.toLowerCase();
+    if (key === "f") {
+        event.preventDefault();
+        openFindPanel(false);
+    }
+    else if (key === "h") {
+        event.preventDefault();
+        openFindPanel(true);
+    }
+});
+/* =====================================================
+   EDITOR TABS
+   Every opened file gets its own in-memory buffer here,
+   independent of what's actually saved on disk. This is
+   what lets you open a second file without losing edits
+   in the first - something the old single-buffer editor
+   couldn't do. `cm` (the one CodeMirror instance) always
+   shows whichever entry is `currentFile`.
+===================================================== */
+const editorTabsEl = document.getElementById("editorTabs");
+function findOpenFile(path) {
+    return openFiles.find((f) => f.path === path) || null;
+}
+function isFileDirty(entry) {
+    return entry.content !== entry.savedContent;
+}
+/*
+ * Call before switching the active tab (or closing/
+ * reloading/switching projects) so whatever's currently
+ * in CodeMirror is captured into its own entry - the
+ * "change" handler already keeps this in sync on every
+ * keystroke, so this is mostly a safety net.
+ */
+function captureActiveTabContent() {
+    if (!currentFile) {
+        return;
+    }
+    const entry = findOpenFile(currentFile);
+    if (entry) {
+        entry.content = cm.getValue();
+    }
+}
+async function saveFileToServer(path, content) {
+    await api(
+        `/api/projects/${encodeURIComponent(
+            currentProject
+        )}/file`,
+        {
+            method: "POST",
+            headers: {
+                "Content-Type":
+                    "application/json"
+            },
+            body:
+                JSON.stringify({
+                    path: path,
+                    content: content
+                })
+        }
+    );
+}
+function clearEditorForNoFile() {
+    currentFile = null;
+    cm.setValue("");
+    editor.dataset.saved = "";
+    filename.textContent = "No file selected";
+    updateStatusLine(null);
+    dirtyIndicator.style.display = "none";
+}
+/*
+ * Points the one shared CodeMirror instance at an
+ * already-open entry. Does not touch the server - use
+ * openFile() for that.
+ */
+function activateTab(path) {
+    const entry = findOpenFile(path);
+    if (!entry) {
+        return;
+    }
+    currentFile = path;
+    editor.dataset.saved = entry.savedContent;
+    cm.setValue(entry.content);
+    filename.textContent = path;
+    updateStatusLine(path);
+    dirtyIndicator.style.display =
+        isFileDirty(entry) ? "inline" : "none";
+    renderTabs();
+}
+function switchToTab(path) {
+    if (path === currentFile) {
+        return;
+    }
+    captureActiveTabContent();
+    activateTab(path);
+    if (isMobile()) {
+        setMobileView("editor");
+    }
+}
+function updateActiveTabDirtyClass() {
+    if (!editorTabsEl || !currentFile) {
+        return;
+    }
+    const entry = findOpenFile(currentFile);
+    const tabEl = editorTabsEl.querySelector(
+        '.editor-tab[data-path="' +
+        CSS.escape(currentFile) +
+        '"]'
+    );
+    if (tabEl && entry) {
+        tabEl.classList.toggle(
+            "dirty",
+            isFileDirty(entry)
+        );
+    }
+}
+function renderTabs() {
+    if (!editorTabsEl) {
+        return;
+    }
+    editorTabsEl.innerHTML = "";
+    openFiles.forEach((entry) => {
+        const tab = document.createElement("div");
+        tab.className =
+            "editor-tab" +
+            (entry.path === currentFile ? " active" : "") +
+            (isFileDirty(entry) ? " dirty" : "");
+        tab.dataset.path = entry.path;
+        tab.setAttribute("role", "tab");
+        tab.setAttribute(
+            "aria-selected",
+            entry.path === currentFile ? "true" : "false"
+        );
+        tab.tabIndex = 0;
+        const iconEl = document.createElement("span");
+        iconEl.className = "editor-tab-icon";
+        iconEl.innerHTML =
+            '<svg class="icon"><use href="#i-file"></use></svg>';
+        const labelEl = document.createElement("span");
+        labelEl.className = "editor-tab-label";
+        labelEl.textContent =
+            entry.path.split("/").pop();
+        labelEl.title = entry.path;
+        const dotEl = document.createElement("span");
+        dotEl.className = "editor-tab-dot";
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "editor-tab-close";
+        closeBtn.setAttribute(
+            "aria-label",
+            "Close " + entry.path
+        );
+        closeBtn.innerHTML =
+            '<svg class="icon"><use href="#i-x"></use></svg>';
+        closeBtn.addEventListener(
+            "click",
+            (event) => {
+                event.stopPropagation();
+                closeTab(entry.path);
+            }
+        );
+        tab.appendChild(iconEl);
+        tab.appendChild(labelEl);
+        tab.appendChild(dotEl);
+        tab.appendChild(closeBtn);
+        tab.addEventListener(
+            "click",
+            () => switchToTab(entry.path)
+        );
+        tab.addEventListener(
+            "keydown",
+            (event) => {
+                if (
+                    event.key === "Enter" ||
+                    event.key === " "
+                ) {
+                    event.preventDefault();
+                    switchToTab(entry.path);
+                }
+                else if (event.key === "Delete") {
+                    event.preventDefault();
+                    closeTab(entry.path);
+                }
+            }
+        );
+        editorTabsEl.appendChild(tab);
+    });
+}
+async function closeTab(path) {
+    const entry = findOpenFile(path);
+    if (!entry) {
+        return;
+    }
+    if (path === currentFile) {
+        captureActiveTabContent();
+    }
+    if (isFileDirty(entry)) {
+        const save = confirm(
+            '"' + path + '" has unsaved changes.\n\n' +
+            "Save before closing?"
+        );
+        if (save) {
+            try {
+                await saveFileToServer(
+                    path,
+                    entry.content
+                );
+                entry.savedContent = entry.content;
+                await loadFiles();
+            }
+            catch (error) {
+                output.textContent =
+                    "Save failed:\n" +
+                    error.message;
+                return;
+            }
+        }
+    }
+    const index =
+        openFiles.findIndex((f) => f.path === path);
+    if (index === -1) {
+        return;
+    }
+    openFiles.splice(index, 1);
+    if (currentFile === path) {
+        const next =
+            openFiles[index] ||
+            openFiles[index - 1] ||
+            null;
+        if (next) {
+            activateTab(next.path);
+        }
+        else {
+            clearEditorForNoFile();
+            renderTabs();
+        }
+    }
+    else {
+        renderTabs();
+    }
+}
+/*
+ * Shared by rename and drag-move: updates the path of
+ * every open tab affected by a file or folder rename, so
+ * open buffers keep following their file instead of
+ * silently pointing at a path that no longer exists.
+ */
+function renamePathsInOpenFiles(oldPath, newPath, isFolder) {
+    let activeChanged = false;
+    openFiles.forEach((entry) => {
+        if (entry.path === oldPath) {
+            entry.path = newPath;
+            if (currentFile === oldPath) {
+                currentFile = newPath;
+                activeChanged = true;
+            }
+        }
+        else if (
+            isFolder &&
+            entry.path.startsWith(oldPath + "/")
+        ) {
+            const wasActive = currentFile === entry.path;
+            entry.path =
+                newPath + entry.path.slice(oldPath.length);
+            if (wasActive) {
+                currentFile = entry.path;
+                activeChanged = true;
+            }
+        }
+    });
+    if (activeChanged) {
+        filename.textContent = currentFile;
+        updateStatusLine(currentFile);
+    }
+    renderTabs();
+}
+/*
+ * Shared by delete: drops every open tab under a deleted
+ * file/folder, and if the active tab was among them,
+ * falls back to another open tab (or clears the editor).
+ */
+function removePathsFromOpenFiles(path, isFolder) {
+    const toRemove = openFiles.filter(
+        (entry) =>
+            entry.path === path ||
+            (
+                isFolder &&
+                entry.path.startsWith(path + "/")
+            )
+    );
+    if (toRemove.length === 0) {
+        return;
+    }
+    const activeWasRemoved =
+        toRemove.some((entry) => entry.path === currentFile);
+    openFiles = openFiles.filter(
+        (entry) => !toRemove.includes(entry)
+    );
+    if (activeWasRemoved) {
+        const next = openFiles[0] || null;
+        if (next) {
+            activateTab(next.path);
+        }
+        else {
+            clearEditorForNoFile();
+            renderTabs();
+        }
+    }
+    else {
+        renderTabs();
+    }
+}
+/* =====================================================
    OPEN FILE
 ===================================================== */
 async function openFile(
     path
 ) {
-    /*
-     * Detect unsaved changes.
-     */
-    if (
-        currentFile &&
-        cm.getValue() !==
-        editor.dataset.saved
-    ) {
-        const save =
-            confirm(
-                "You have unsaved changes.\n\n" +
-                "Save them?"
+    const existing = findOpenFile(path);
+    if (existing) {
+        switchToTab(path);
+        if (
+            isMobile()
+        ) {
+            closeSidebar();
+            setMobileView(
+                "editor"
             );
-        if (save) {
-            try {
-                await saveFile();
-            }
-            catch (error) {
-                return;
-            }
         }
+        await loadFiles();
+        return;
     }
     try {
         const data =
@@ -2252,14 +2751,13 @@ async function openFile(
                     path
                 )}`
             );
-        currentFile = path;
-        cm.setValue(
-            data.content
-        );
-        editor.dataset.saved = data.content;
-        filename.textContent = path;
-        updateStatusLine(path);
-        dirtyIndicator.style.display = "none";
+        captureActiveTabContent();
+        openFiles.push({
+            path: path,
+            content: data.content,
+            savedContent: data.content
+        });
+        activateTab(path);
         /*
          * On mobile, opening a file should close the
          * drawer and bring the editor into view.
@@ -2294,29 +2792,20 @@ async function saveFile() {
     ) {
         return;
     }
+    const content = cm.getValue();
     try {
-        await api(
-            `/api/projects/${encodeURIComponent(
-                currentProject
-            )}/file`,
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-                body:
-                    JSON.stringify({
-                        path:
-                            currentFile,
-                        content:
-                            cm.getValue()
-                    })
-            }
+        await saveFileToServer(
+            currentFile,
+            content
         );
-        editor.dataset.saved =
-            cm.getValue();
+        editor.dataset.saved = content;
+        const entry = findOpenFile(currentFile);
+        if (entry) {
+            entry.content = content;
+            entry.savedContent = content;
+        }
         dirtyIndicator.style.display = "none";
+        updateActiveTabDirtyClass();
         output.textContent =
             "Saved:\n" +
             currentFile;
@@ -3027,6 +3516,18 @@ function mobileMoveCursor(delta) {
 ===================================================== */
 const COMMAND_PALETTE_ITEMS = [
     {
+        label: "Find in File",
+        icon: "search",
+        shortcut: "Ctrl+F",
+        action: () => openFindPanel(false)
+    },
+    {
+        label: "Find and Replace",
+        icon: "edit",
+        shortcut: "Ctrl+H",
+        action: () => openFindPanel(true)
+    },
+    {
         label: "Save File",
         icon: "save",
         shortcut: "Ctrl+S",
@@ -3200,110 +3701,4 @@ function renderQuickPickerList() {
             item.icon +
             '"></use></svg>';
         const labelEl = document.createElement("span");
-        labelEl.className = "quick-picker-item-label";
-        labelEl.textContent = item.label;
-        row.appendChild(iconEl);
-        row.appendChild(labelEl);
-        if (item.shortcut) {
-            const shortcutEl =
-                document.createElement("span");
-            shortcutEl.className =
-                "quick-picker-item-shortcut";
-            shortcutEl.textContent = item.shortcut;
-            row.appendChild(shortcutEl);
-        }
-        row.addEventListener(
-            "mousedown",
-            (event) => {
-                /*
-                 * mousedown (not click) fires before the
-                 * input's blur would otherwise close the
-                 * picker first and swallow the selection.
-                 */
-                event.preventDefault();
-                runQuickPickerItem(index);
-            }
-        );
-        quickPickerListEl.appendChild(row);
-    });
-}
-function runQuickPickerItem(index) {
-    const item = quickPickerFiltered[index];
-    if (!item) {
-        return;
-    }
-    closeQuickPicker();
-    item.action();
-}
-function moveQuickPickerSelection(delta) {
-    if (quickPickerFiltered.length === 0) {
-        return;
-    }
-    quickPickerActiveIndex =
-        (quickPickerActiveIndex +
-            delta +
-            quickPickerFiltered.length) %
-        quickPickerFiltered.length;
-    renderQuickPickerList();
-    const activeEl =
-        quickPickerListEl.children[quickPickerActiveIndex];
-    if (activeEl) {
-        activeEl.scrollIntoView({ block: "nearest" });
-    }
-}
-function openCommandPalette() {
-    openQuickPicker("command");
-}
-function openFileSwitcher() {
-    openQuickPicker("file");
-}
-quickPickerInput.addEventListener("input", (event) => {
-    filterQuickPicker(event.target.value);
-});
-quickPickerInput.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowDown") {
-        event.preventDefault();
-        moveQuickPickerSelection(1);
-    }
-    else if (event.key === "ArrowUp") {
-        event.preventDefault();
-        moveQuickPickerSelection(-1);
-    }
-    else if (event.key === "Enter") {
-        event.preventDefault();
-        runQuickPickerItem(quickPickerActiveIndex);
-    }
-    else if (event.key === "Escape") {
-        event.preventDefault();
-        closeQuickPicker();
-    }
-});
-quickPickerEl.addEventListener("mousedown", (event) => {
-    if (event.target === quickPickerEl) {
-        closeQuickPicker();
-    }
-});
-document.addEventListener("keydown", (event) => {
-    const mod = event.ctrlKey || event.metaKey;
-    if (!mod) {
-        return;
-    }
-    const key = event.key.toLowerCase();
-    if (key === "p" && event.shiftKey) {
-        event.preventDefault();
-        openCommandPalette();
-    }
-    else if (key === "p") {
-        event.preventDefault();
-        openFileSwitcher();
-    }
-});
-
-/* =====================================================
-   BOOTSTRAP
-   Kicks the whole app off - loads (or creates) a
-   project and populates the file tree. Everything else
-   (Run, Save, the terminal, etc.) is inert until this
-   has set currentProject.
-===================================================== */
-loadProjects();
+        labelEl.className = "quick-picker
