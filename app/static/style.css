@@ -440,6 +440,7 @@ input:focus-visible,
     min-width: 0;
     display: flex;
     flex-direction: column;
+    position: relative;
 }
 #filebar {
     height: 38px;
@@ -1360,4 +1361,257 @@ button,
     text-align: center;
     color: var(--text-muted);
     font-size: 13px;
+}
+
+/* =====================================================
+   EDITOR TABS
+   One buffer per open file. The active tab mirrors
+   #filebar's filename below it (tabs show the short
+   name for quick scanning; the filebar/status bar show
+   the full path).
+===================================================== */
+#editorTabs {
+    display: flex;
+    align-items: stretch;
+    height: 34px;
+    min-height: 34px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+}
+#editorTabs:empty {
+    display: none;
+}
+.editor-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    max-width: 168px;
+    padding: 0 6px 0 10px;
+    border-right: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    position: relative;
+    user-select: none;
+}
+.editor-tab:hover {
+    background: var(--surface-hover);
+    color: var(--text-soft);
+}
+.editor-tab.active {
+    background: var(--bg-inset);
+    color: var(--text);
+}
+.editor-tab.active::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--accent);
+}
+.editor-tab:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+}
+.editor-tab-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--text-faint);
+}
+.editor-tab.active .editor-tab-icon {
+    color: var(--text-muted);
+}
+.editor-tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+}
+.editor-tab-dot {
+    display: none;
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--warning);
+}
+.editor-tab.dirty .editor-tab-dot {
+    display: block;
+}
+.editor-tab.dirty .editor-tab-close {
+    /*
+     * VS Code convention: while a tab is dirty, its
+     * "close" button gives way to the dot until you
+     * actually hover/focus the tab.
+     */
+    display: none;
+}
+.editor-tab.dirty:hover .editor-tab-close,
+.editor-tab.dirty:focus-within .editor-tab-close {
+    display: flex;
+}
+.editor-tab.dirty:hover .editor-tab-dot,
+.editor-tab.dirty:focus-within .editor-tab-dot {
+    display: none;
+}
+.editor-tab-close {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-faint);
+}
+.editor-tab-close:hover {
+    background: var(--surface-active);
+    color: var(--text);
+}
+.editor-tab-close:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+/* =========================
+   EXPLORER: open-file
+   indicators
+========================= */
+.file.file-open .file-name {
+    color: var(--text);
+}
+.file-row-dirty-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--warning);
+}
+@media (max-width: 480px) {
+    .editor-tab {
+        max-width: 130px;
+    }
+}
+
+/* =========================
+   ICON ROTATION UTILITIES
+========================= */
+.icon-rot-90 {
+    transform: rotate(90deg);
+}
+.icon-rot-neg90 {
+    transform: rotate(-90deg);
+}
+/* =====================================================
+   FIND / REPLACE
+   Floats over the editor's top-right corner rather than
+   pushing content around, matching the inline find
+   widget pattern most editors use.
+===================================================== */
+#findPanel {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+}
+.find-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    color: var(--text-muted);
+}
+.find-row + .find-row {
+    border-top: 1px solid var(--border);
+}
+.find-row input {
+    width: 160px;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+.find-row input:focus {
+    outline: none;
+}
+.find-count {
+    flex-shrink: 0;
+    min-width: 42px;
+    text-align: center;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-faint);
+}
+.find-icon-btn {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.cm-find-match {
+    background: rgba(210, 153, 34, 0.35);
+    border-radius: 2px;
+}
+@media (max-width: 480px) {
+    #findPanel {
+        left: 8px;
+        right: 8px;
+    }
+    .find-row input {
+        width: auto;
+        flex: 1;
+    }
+}
+/* =====================================================
+   CODE FOLDING GUTTER
+   Restyled to match the app's chevron language instead
+   of CodeMirror's default triangles.
+===================================================== */
+.CodeMirror-foldgutter {
+    width: 14px;
+}
+.CodeMirror-foldgutter-open,
+.CodeMirror-foldgutter-folded {
+    cursor: pointer;
+    color: var(--text-faint);
+}
+.CodeMirror-foldgutter-open:hover,
+.CodeMirror-foldgutter-folded:hover {
+    color: var(--accent);
+}
+.CodeMirror-foldgutter-open::after {
+    content: "▾";
+    font-size: 11px;
+}
+.CodeMirror-foldgutter-folded::after {
+    content: "▸";
+    font-size: 11px;
+}
+.CodeMirror-foldmarker {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-family: var(--font-mono);
+    cursor: pointer;
 }
