@@ -34,6 +34,25 @@
     <script
         src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"
     ></script>
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"
+    ></script>
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.css"
+    >
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldcode.min.js"
+    ></script>
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/foldgutter.min.js"
+    ></script>
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/indent-fold.min.js"
+    ></script>
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/brace-fold.min.js"
+    ></script>
     <!-- =========================
          TERMINAL (xterm.js)
          A real, interactive terminal
@@ -87,6 +106,7 @@
 <symbol id="i-more-vertical" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="20" y1="20" x2="15.5" y2="15.5"/></symbol>
 <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></symbol>
 </defs>
 </svg>
 <!-- =========================
@@ -231,6 +251,89 @@
          MAIN
     ====================== -->
     <main id="main">
+        <!-- =================
+             EDITOR TABS
+             One entry per open
+             file - independent
+             buffers, populated
+             entirely by app.js.
+        ================== -->
+        <div
+            id="editorTabs"
+            role="tablist"
+            aria-label="Open files"
+        ></div>
+        <!-- =================
+             FIND / REPLACE
+             Floats over the top-
+             right of the editor;
+             hidden until Ctrl/
+             Cmd+F or +H.
+        ================== -->
+        <div
+            id="findPanel"
+            role="search"
+            aria-label="Find and replace"
+            hidden
+        >
+            <div class="find-row">
+                <svg class="icon"><use href="#i-search"></use></svg>
+                <input
+                    id="findInput"
+                    type="text"
+                    placeholder="Find"
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    aria-label="Find"
+                >
+                <span id="findCount" class="find-count">0/0</span>
+                <button
+                    type="button"
+                    onclick="findPrev()"
+                    class="find-icon-btn"
+                    aria-label="Previous match"
+                    title="Previous match (Shift+Enter)"
+                ><svg class="icon icon-rot-neg90"><use href="#i-chevron"></use></svg></button>
+                <button
+                    type="button"
+                    onclick="findNext()"
+                    class="find-icon-btn"
+                    aria-label="Next match"
+                    title="Next match (Enter)"
+                ><svg class="icon icon-rot-90"><use href="#i-chevron"></use></svg></button>
+                <button
+                    type="button"
+                    onclick="toggleFindReplaceRow()"
+                    class="find-icon-btn"
+                    aria-label="Toggle replace"
+                    title="Toggle replace (Ctrl+H)"
+                ><svg class="icon"><use href="#i-edit"></use></svg></button>
+                <button
+                    type="button"
+                    onclick="closeFindPanel()"
+                    class="find-icon-btn"
+                    aria-label="Close find panel"
+                    title="Close (Esc)"
+                ><svg class="icon"><use href="#i-x"></use></svg></button>
+            </div>
+            <div id="findReplaceRow" class="find-row" hidden>
+                <svg class="icon"><use href="#i-edit"></use></svg>
+                <input
+                    id="replaceInput"
+                    type="text"
+                    placeholder="Replace"
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    aria-label="Replace"
+                >
+                <button type="button" onclick="replaceOne()">Replace</button>
+                <button type="button" onclick="replaceAll()">All</button>
+            </div>
+        </div>
         <div id="filebar">
             <span id="filename">
                 No file selected
