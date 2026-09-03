@@ -85,6 +85,8 @@
 <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M5 7l5 5-5 5"/><line x1="12" y1="17" x2="19" y2="17"/></symbol>
 <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17.5" r="0.9" fill="currentColor" stroke="none"/></symbol>
 <symbol id="i-more-vertical" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="20" y1="20" x2="15.5" y2="15.5"/></symbol>
+<symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></symbol>
 </defs>
 </svg>
 <!-- =========================
@@ -117,6 +119,18 @@
             <svg class="icon"><use href="#i-more"></use></svg>
         </button>
         <div id="toolbarMore">
+            <button
+                onclick="hideMoreToolbarMenu(); openCommandPalette()"
+                title="Command palette (Ctrl+Shift+P)"
+            >
+                <svg class="icon"><use href="#i-zap"></use></svg> Command Palette
+            </button>
+            <button
+                onclick="hideMoreToolbarMenu(); openFileSwitcher()"
+                title="Go to file (Ctrl+P)"
+            >
+                <svg class="icon"><use href="#i-search"></use></svg> Go to File
+            </button>
             <button
                 onclick="hideMoreToolbarMenu(); newProject()"
                 title="Create a new project"
@@ -481,6 +495,38 @@
     >
         <svg class="icon"><use href="#i-trash"></use></svg> Delete
     </button>
+</div>
+<!-- =========================
+     QUICK PICKER
+     Shared overlay for the
+     Command Palette
+     (Ctrl/Cmd+Shift+P) and
+     Go to File (Ctrl/Cmd+P).
+========================= -->
+<div id="quickPicker" role="dialog" aria-modal="true" aria-label="Quick picker">
+    <div class="quick-picker-panel">
+        <div class="quick-picker-input-row">
+            <svg class="icon"><use id="quickPickerIcon" href="#i-search"></use></svg>
+            <input
+                id="quickPickerInput"
+                type="text"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                placeholder="Go to file…"
+                aria-label="Quick picker search"
+            >
+        </div>
+        <div
+            id="quickPickerList"
+            role="listbox"
+            aria-label="Results"
+        ></div>
+        <div id="quickPickerEmpty" class="quick-picker-empty" hidden>
+            No matches
+        </div>
+    </div>
 </div>
 <script src="/static/app.js"></script>
 </body>
