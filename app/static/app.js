@@ -2,6 +2,7 @@
    STATE
 ===================================================== */
 let currentProject = null;
+let currentProjectFiles = [];
 let currentFile = null;
 let expandedFolders = new Set();
 let dragPath = null;
@@ -1579,6 +1580,7 @@ async function loadFiles() {
                     currentProject
                 )}/files`
             );
+        currentProjectFiles = data.files;
         const container = document.getElementById("files");
         if (
             data.tree.length === 0
@@ -3013,6 +3015,289 @@ function mobileMoveCursor(delta) {
     cm.setCursor({ line: pos.line, ch: newCh });
     cm.focus();
 }
+
+/* =====================================================
+   QUICK PICKER
+   Shared overlay behind both the Command Palette
+   (Ctrl/Cmd+Shift+P) and Go to File (Ctrl/Cmd+P) - same
+   widget, two data sources. Every command here just
+   calls the real existing function; nothing new is
+   invented, this is purely a faster way to reach what
+   Save/Run/New File/etc. already do.
+===================================================== */
+const COMMAND_PALETTE_ITEMS = [
+    {
+        label: "Save File",
+        icon: "save",
+        shortcut: "Ctrl+S",
+        action: () => saveFile()
+    },
+    {
+        label: "Run Current File",
+        icon: "play",
+        shortcut: "Ctrl+Enter",
+        action: () => runCurrent()
+    },
+    {
+        label: "New Project",
+        icon: "plus",
+        action: () => newProject()
+    },
+    {
+        label: "New File",
+        icon: "file-plus",
+        action: () => newFile()
+    },
+    {
+        label: "New Folder",
+        icon: "folder-plus",
+        action: () => newFolder()
+    },
+    {
+        label: "Upload Files",
+        icon: "upload",
+        action: () => triggerUpload("")
+    },
+    {
+        label: "Install Requirements",
+        icon: "package",
+        action: () => installRequirements()
+    },
+    {
+        label: "Show Output Panel",
+        icon: "terminal",
+        action: () => setBottomTab("output")
+    },
+    {
+        label: "Show Terminal Panel",
+        icon: "terminal",
+        action: () => setBottomTab("terminal")
+    },
+    {
+        label: "Restart Terminal",
+        icon: "refresh",
+        action: () => restartTerminal()
+    },
+    {
+        label: "Clear Terminal",
+        icon: "clear",
+        action: () => clearTerminalView()
+    },
+    {
+        label: "Copy Terminal Output",
+        icon: "copy",
+        action: () => copyTerminalOutput()
+    },
+    {
+        label: "Show Camera Panel",
+        icon: "camera",
+        action: () => setBottomTab("camera")
+    },
+    {
+        label: "Start/Stop Camera",
+        icon: "camera",
+        action: () => toggleCamera()
+    },
+    {
+        label: "Switch Camera (front/back)",
+        icon: "refresh",
+        action: () => switchCameraFacing()
+    },
+    {
+        label: "Delete Current Line",
+        icon: "trash",
+        shortcut: "Ctrl+Shift+K",
+        action: () => {
+            deleteCurrentLines(cm);
+            cm.focus();
+        }
+    }
+];
+const quickPickerEl = document.getElementById("quickPicker");
+const quickPickerInput = document.getElementById(
+    "quickPickerInput"
+);
+const quickPickerIconUse = document.getElementById(
+    "quickPickerIcon"
+);
+const quickPickerListEl = document.getElementById(
+    "quickPickerList"
+);
+const quickPickerEmptyEl = document.getElementById(
+    "quickPickerEmpty"
+);
+let quickPickerItems = [];
+let quickPickerFiltered = [];
+let quickPickerActiveIndex = 0;
+function openQuickPicker(mode) {
+    if (mode === "file") {
+        if (!currentProject) {
+            return;
+        }
+        quickPickerItems = currentProjectFiles.map(
+            (path) => ({
+                label: path,
+                icon: "file",
+                action: () => openFile(path)
+            })
+        );
+        quickPickerInput.placeholder = "Go to file…";
+        quickPickerIconUse.setAttribute(
+            "href",
+            "#i-search"
+        );
+    }
+    else {
+        quickPickerItems = COMMAND_PALETTE_ITEMS;
+        quickPickerInput.placeholder = "Type a command…";
+        quickPickerIconUse.setAttribute(
+            "href",
+            "#i-zap"
+        );
+    }
+    quickPickerInput.value = "";
+    quickPickerEl.classList.add("show");
+    filterQuickPicker("");
+    setTimeout(() => quickPickerInput.focus(), 0);
+}
+function closeQuickPicker() {
+    quickPickerEl.classList.remove("show");
+    quickPickerItems = [];
+    quickPickerFiltered = [];
+}
+function filterQuickPicker(query) {
+    const q = query.trim().toLowerCase();
+    quickPickerFiltered =
+        !q ?
+            quickPickerItems :
+            quickPickerItems.filter((item) =>
+                item.label.toLowerCase().includes(q)
+            );
+    quickPickerActiveIndex = 0;
+    renderQuickPickerList();
+}
+function renderQuickPickerList() {
+    quickPickerListEl.innerHTML = "";
+    quickPickerEmptyEl.hidden =
+        quickPickerFiltered.length !== 0;
+    quickPickerFiltered.forEach((item, index) => {
+        const row = document.createElement("div");
+        row.className =
+            "quick-picker-item" +
+            (index === quickPickerActiveIndex ?
+                " active" :
+                "");
+        row.setAttribute("role", "option");
+        row.setAttribute(
+            "aria-selected",
+            index === quickPickerActiveIndex ?
+                "true" :
+                "false"
+        );
+        const iconEl = document.createElement("span");
+        iconEl.innerHTML =
+            '<svg class="icon"><use href="#i-' +
+            item.icon +
+            '"></use></svg>';
+        const labelEl = document.createElement("span");
+        labelEl.className = "quick-picker-item-label";
+        labelEl.textContent = item.label;
+        row.appendChild(iconEl);
+        row.appendChild(labelEl);
+        if (item.shortcut) {
+            const shortcutEl =
+                document.createElement("span");
+            shortcutEl.className =
+                "quick-picker-item-shortcut";
+            shortcutEl.textContent = item.shortcut;
+            row.appendChild(shortcutEl);
+        }
+        row.addEventListener(
+            "mousedown",
+            (event) => {
+                /*
+                 * mousedown (not click) fires before the
+                 * input's blur would otherwise close the
+                 * picker first and swallow the selection.
+                 */
+                event.preventDefault();
+                runQuickPickerItem(index);
+            }
+        );
+        quickPickerListEl.appendChild(row);
+    });
+}
+function runQuickPickerItem(index) {
+    const item = quickPickerFiltered[index];
+    if (!item) {
+        return;
+    }
+    closeQuickPicker();
+    item.action();
+}
+function moveQuickPickerSelection(delta) {
+    if (quickPickerFiltered.length === 0) {
+        return;
+    }
+    quickPickerActiveIndex =
+        (quickPickerActiveIndex +
+            delta +
+            quickPickerFiltered.length) %
+        quickPickerFiltered.length;
+    renderQuickPickerList();
+    const activeEl =
+        quickPickerListEl.children[quickPickerActiveIndex];
+    if (activeEl) {
+        activeEl.scrollIntoView({ block: "nearest" });
+    }
+}
+function openCommandPalette() {
+    openQuickPicker("command");
+}
+function openFileSwitcher() {
+    openQuickPicker("file");
+}
+quickPickerInput.addEventListener("input", (event) => {
+    filterQuickPicker(event.target.value);
+});
+quickPickerInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveQuickPickerSelection(1);
+    }
+    else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveQuickPickerSelection(-1);
+    }
+    else if (event.key === "Enter") {
+        event.preventDefault();
+        runQuickPickerItem(quickPickerActiveIndex);
+    }
+    else if (event.key === "Escape") {
+        event.preventDefault();
+        closeQuickPicker();
+    }
+});
+quickPickerEl.addEventListener("mousedown", (event) => {
+    if (event.target === quickPickerEl) {
+        closeQuickPicker();
+    }
+});
+document.addEventListener("keydown", (event) => {
+    const mod = event.ctrlKey || event.metaKey;
+    if (!mod) {
+        return;
+    }
+    const key = event.key.toLowerCase();
+    if (key === "p" && event.shiftKey) {
+        event.preventDefault();
+        openCommandPalette();
+    }
+    else if (key === "p") {
+        event.preventDefault();
+        openFileSwitcher();
+    }
+});
 
 /* =====================================================
    BOOTSTRAP
