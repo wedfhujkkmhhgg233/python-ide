@@ -1517,36 +1517,30 @@ button,
    widget pattern most editors use.
 ===================================================== */
 #findPanel {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 60;
     display: flex;
     flex-direction: column;
-    gap: 1px;
     background: var(--surface-raised);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
-    overflow: hidden;
+    border-bottom: 1px solid var(--border-strong);
+    box-shadow: var(--shadow-sm);
 }
 .find-row {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
+    gap: 8px;
+    padding: 8px var(--space-3);
     color: var(--text-muted);
 }
 .find-row + .find-row {
     border-top: 1px solid var(--border);
 }
 .find-row input {
-    width: 160px;
+    flex: 1;
+    min-width: 0;
     border: none;
     background: transparent;
     color: var(--text);
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 14px;
 }
 .find-row input:focus {
     outline: none;
@@ -1561,8 +1555,8 @@ button,
 }
 .find-icon-btn {
     flex-shrink: 0;
-    width: 26px;
-    height: 26px;
+    width: 34px;
+    height: 34px;
     padding: 0;
     display: flex;
     align-items: center;
@@ -1572,14 +1566,14 @@ button,
     background: rgba(210, 153, 34, 0.35);
     border-radius: 2px;
 }
-@media (max-width: 480px) {
-    #findPanel {
-        left: 8px;
-        right: 8px;
+@media (max-width: 700px) {
+    .find-icon-btn {
+        width: 40px;
+        height: 40px;
     }
     .find-row input {
-        width: auto;
-        flex: 1;
+        /* >=16px keeps iOS/Android from zooming in on focus */
+        font-size: 16px;
     }
 }
 /* =====================================================
