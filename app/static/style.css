@@ -1517,11 +1517,14 @@ button,
    widget pattern most editors use.
 ===================================================== */
 #findPanel {
-    display: flex;
+    display: none;
     flex-direction: column;
     background: var(--surface-raised);
     border-bottom: 1px solid var(--border-strong);
     box-shadow: var(--shadow-sm);
+}
+#findPanel.show {
+    display: flex;
 }
 .find-row {
     display: flex;
@@ -1529,6 +1532,12 @@ button,
     gap: 8px;
     padding: 8px var(--space-3);
     color: var(--text-muted);
+}
+#findReplaceRow {
+    display: none;
+}
+#findReplaceRow.show {
+    display: flex;
 }
 .find-row + .find-row {
     border-top: 1px solid var(--border);
