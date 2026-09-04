@@ -475,7 +475,7 @@ const cm =
     );
 cm.on(
     "change",
-    function() {
+    function(instance, changeObj) {
         if (currentFile) {
             const activeEntry = findOpenFile(currentFile);
             if (activeEntry) {
@@ -493,6 +493,7 @@ cm.on(
         }
         updateActiveTabDirtyClass();
         scheduleLint();
+        scheduleAutocompleteTrigger(instance, changeObj);
     }
 );
 /* =====================================================
@@ -756,23 +757,36 @@ function jumpToNextProblem() {
    immediately after ".", with a short debounce after any
    other word character. Skipped inside strings/comments -
    nobody wants "print" suggested while writing a comment.
+
+   This hooks into the plain "change" event (called from
+   the cm.on("change", ...) handler above) rather than
+   CodeMirror's higher-level "inputRead" event. inputRead
+   assumes traditional one-keystroke-at-a-time typing and
+   doesn't reliably fire for mobile soft keyboards, which
+   often deliver text via IME composition or autocorrect
+   in ways that don't match what it expects. "change" fires
+   for literally any edit regardless of how the browser
+   delivered it, and instead of trying to inspect exactly
+   what was typed, this just looks at whatever character is
+   sitting immediately before the cursor right now.
 ===================================================== */
 let autocompleteTimer = null;
-cm.on("inputRead", function(instance, changeObj) {
+function scheduleAutocompleteTrigger(instance, changeObj) {
     if (
+        changeObj &&
         changeObj.origin &&
         changeObj.origin.indexOf("+delete") === 0
     ) {
-        return;
-    }
-    if (!changeObj.text || changeObj.text.length !== 1) {
-        return;
-    }
-    const typed = changeObj.text[0];
-    if (!/^[\w.]$/.test(typed)) {
+        clearTimeout(autocompleteTimer);
         return;
     }
     const pos = instance.getCursor();
+    const line = instance.getLine(pos.line);
+    const charBefore =
+        pos.ch > 0 ? line.charAt(pos.ch - 1) : "";
+    if (!/[\w.]/.test(charBefore)) {
+        return;
+    }
     const tokenType = instance.getTokenTypeAt(pos);
     if (tokenType && /comment|string/.test(tokenType)) {
         return;
@@ -784,9 +798,9 @@ cm.on("inputRead", function(instance, changeObj) {
                 triggerAutocomplete(instance);
             }
         },
-        typed === "." ? 20 : 200
+        charBefore === "." ? 20 : 200
     );
-});
+}
 /* =====================================================
    EDITOR FONT ZOOM
    Ctrl/Cmd +/- and Ctrl/Cmd+0, like every real IDE.
