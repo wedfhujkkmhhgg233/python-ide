@@ -667,6 +667,27 @@ app.mount(
 )
 
 
+@app.middleware("http")
+async def no_cache_static_assets(request: Request, call_next):
+    """
+    Same problem as index.html above, for app.js/style.css:
+    mobile browsers cache static assets aggressively, and
+    StaticFiles doesn't send a Cache-Control header on its
+    own. Without this, a phone can keep running yesterday's
+    app.js forever - every deploy "does nothing" - even
+    though index.html itself is always fetched fresh. This
+    still lets the browser send conditional requests (via
+    StaticFiles' own ETag/Last-Modified), it just forces a
+    revalidation instead of trusting a stale local copy.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = (
+            "no-cache, must-revalidate"
+        )
+    return response
+
+
 PROJECTS_DIR = Path(
     os.getenv(
         "PROJECTS_DIR",
