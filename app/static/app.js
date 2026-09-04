@@ -254,8 +254,15 @@ function smartPythonHint(instance, callback) {
             to: range.to
         };
     };
+    const report = (result) => {
+        showDebugToast(
+            "smartPythonHint -> " +
+            result.list.length + " item(s)"
+        );
+        callback(result);
+    };
     if (!isPython || !currentFile) {
-        callback(buildResult([]));
+        report(buildResult([]));
         return;
     }
     /*
@@ -272,7 +279,7 @@ function smartPythonHint(instance, callback) {
             return;
         }
         settled = true;
-        callback(buildResult([]));
+        report(buildResult([]));
     }, 350);
     fetchServerCompletions(
         currentFile,
@@ -286,10 +293,64 @@ function smartPythonHint(instance, callback) {
         }
         settled = true;
         clearTimeout(localOnlyTimer);
-        callback(buildResult(serverCandidates));
+        report(buildResult(serverCandidates));
     });
 }
 smartPythonHint.async = true;
+/*
+ * TEMPORARY VISIBLE DEBUGGING (autocomplete rollout)
+ * ---------------------------------------------------
+ * Android Chrome doesn't have easy on-device DevTools
+ * access, so a console.warn() is invisible to whoever's
+ * actually testing this on a phone. These render an
+ * on-screen banner/toast instead, so "does autocomplete
+ * work" can be answered from a screenshot with no computer
+ * needed. Safe to delete this whole block once confirmed
+ * working - it doesn't affect functionality either way.
+ */
+function showDebugBanner(text, color) {
+    let el = document.getElementById("acDebugBanner");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "acDebugBanner";
+        el.style.cssText =
+            "position:fixed;top:0;left:0;right:0;" +
+            "z-index:99999;padding:6px 10px;" +
+            "font:12px monospace;text-align:center;" +
+            "color:#fff;";
+        document.body.appendChild(el);
+    }
+    el.style.background = color;
+    el.textContent = text;
+}
+function showDebugToast(text) {
+    let el = document.getElementById("acDebugToast");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "acDebugToast";
+        el.style.cssText =
+            "position:fixed;bottom:8px;left:8px;right:8px;" +
+            "z-index:99999;padding:6px 10px;" +
+            "font:11px monospace;text-align:center;" +
+            "color:#fff;background:#333;border-radius:6px;" +
+            "opacity:0.95;";
+        document.body.appendChild(el);
+    }
+    el.textContent = text;
+}
+if (typeof CodeMirror.showHint !== "function") {
+    showDebugBanner(
+        "AUTOCOMPLETE DEBUG: show-hint.js did NOT load " +
+        "(CodeMirror.showHint is missing)",
+        "#f0665d"
+    );
+}
+else {
+    showDebugBanner(
+        "AUTOCOMPLETE DEBUG: show-hint.js loaded OK",
+        "#3fb950"
+    );
+}
 /*
  * One choke point for every "open the hint popup" call site
  * (Ctrl/Cmd+Space and the auto-trigger below). If the show-hint
@@ -306,8 +367,13 @@ function triggerAutocomplete(instance) {
             "is missing - the show-hint addon script likely " +
             "failed to load."
         );
+        showDebugToast(
+            "triggerAutocomplete() called, but " +
+            "CodeMirror.showHint is missing"
+        );
         return;
     }
+    showDebugToast("triggerAutocomplete() called - opening hint");
     CodeMirror.showHint(
         instance,
         smartPythonHint,
