@@ -281,33 +281,53 @@ function smartPythonHint(instance, callback) {
      * Local suggestions (doc words + keywords/builtins) never
      * need the network - they should never be held hostage by
      * a slow or hung request to /complete. Give the server a
-     * short window to contribute Jedi's smarter results; if it
+     * window to contribute Jedi's smarter results; if it
      * doesn't make it in time, show what we already have rather
-     * than showing nothing at all.
+     * than showing nothing at all. 1200ms rather than something
+     * snappier because Jedi's first real analysis pass on a
+     * free-tier host can genuinely take a while - a too-tight
+     * timeout here just throws away a slow-but-real answer.
      */
+    const startedAt =
+        (window.performance && performance.now) ?
+            performance.now() :
+            Date.now();
     let settled = false;
     const localOnlyTimer = setTimeout(() => {
         if (settled) {
             return;
         }
         settled = true;
-        report(buildResult([]), "350ms timeout, no server reply yet");
-    }, 350);
+        report(
+            buildResult([]),
+            "1200ms timeout, no server reply yet"
+        );
+    }, 1200);
     fetchServerCompletions(
         currentFile,
         instance.getValue(),
         instance.getCursor()
     ).then((serverResult) => {
+        const elapsed = Math.round(
+            ((window.performance && performance.now) ?
+                performance.now() :
+                Date.now()) - startedAt
+        );
         if (settled) {
-            // Local-only result already shown - too late to
-            // swap it out from under the user.
+            // Local-only result already shown, but this still
+            // tells us the real round-trip time even though
+            // it's too late to update the popup with it.
+            showDebugToast(
+                "(late) /complete replied after " +
+                elapsed + "ms: " + serverResult.debug
+            );
             return;
         }
         settled = true;
         clearTimeout(localOnlyTimer);
         report(
             buildResult(serverResult.completions),
-            serverResult.debug
+            elapsed + "ms | " + serverResult.debug
         );
     });
 }
