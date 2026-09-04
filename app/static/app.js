@@ -53,6 +53,219 @@ function deleteCurrentLines(instance) {
         );
     }
 }
+/* =====================================================
+   AUTOCOMPLETE / INTELLISENSE
+   Two layers, merged into one dropdown:
+     - server-side (Jedi, if installed) - real completions
+       that understand imports, other files in the project,
+       and object attributes after a dot
+     - local (this document + Python keywords/builtins) -
+       instant, works even if Jedi isn't installed, and
+       covers names Jedi wouldn't know about yet (e.g. a
+       variable defined two lines above the cursor)
+   Triggered automatically while typing (like VS Code) and
+   manually via Ctrl/Cmd+Space.
+===================================================== */
+const PYTHON_KEYWORDS = [
+    "False", "None", "True", "and", "as", "assert",
+    "async", "await", "break", "class", "continue", "def",
+    "del", "elif", "else", "except", "finally", "for",
+    "from", "global", "if", "import", "in", "is", "lambda",
+    "nonlocal", "not", "or", "pass", "raise", "return",
+    "try", "while", "with", "yield"
+];
+const PYTHON_BUILTINS = [
+    "abs", "all", "any", "bin", "bool", "bytearray",
+    "bytes", "callable", "chr", "classmethod", "dict",
+    "dir", "divmod", "enumerate", "eval", "filter", "float",
+    "format", "frozenset", "getattr", "hasattr", "hash",
+    "help", "hex", "id", "input", "int", "isinstance",
+    "issubclass", "iter", "len", "list", "map", "max",
+    "min", "next", "object", "oct", "open", "ord", "pow",
+    "print", "property", "range", "repr", "reversed",
+    "round", "set", "setattr", "slice", "sorted",
+    "staticmethod", "str", "sum", "super", "tuple", "type",
+    "vars", "zip", "self", "__init__", "__name__", "__main__"
+];
+const HINT_ICON_LETTER = {
+    function: "f",
+    method: "f",
+    class: "c",
+    module: "m",
+    keyword: "k",
+    builtin: "b",
+    instance: "v",
+    variable: "v",
+    param: "p",
+    statement: "s",
+    property: "p"
+};
+function currentWordRange(instance) {
+    const cursor = instance.getCursor();
+    const line = instance.getLine(cursor.line);
+    let start = cursor.ch;
+    while (
+        start > 0 &&
+        /[A-Za-z0-9_]/.test(line.charAt(start - 1))
+    ) {
+        start--;
+    }
+    return {
+        from: CodeMirror.Pos(cursor.line, start),
+        to: cursor
+    };
+}
+function localCandidates(instance, prefix, afterDot) {
+    if (afterDot) {
+        // Nothing local can know what's valid after "obj." -
+        // that's Jedi's job. Offering keywords/doc-words here
+        // would just be noise.
+        return [];
+    }
+    const seen = new Set();
+    const results = [];
+    const addAll = (names, type) => {
+        names.forEach((name) => {
+            if (
+                name.startsWith(prefix) &&
+                name !== prefix &&
+                !seen.has(name)
+            ) {
+                seen.add(name);
+                results.push({ text: name, type });
+            }
+        });
+    };
+    const text = instance.getValue();
+    const idMatches =
+        text.match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
+    addAll([...new Set(idMatches)], "variable");
+    addAll(PYTHON_BUILTINS, "builtin");
+    addAll(PYTHON_KEYWORDS, "keyword");
+    return results;
+}
+async function fetchServerCompletions(path, content, pos) {
+    if (!currentProject) {
+        return [];
+    }
+    try {
+        const data = await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/complete`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    path: path,
+                    content: content,
+                    line: pos.line,
+                    col: pos.ch
+                })
+            }
+        );
+        return data.completions || [];
+    }
+    catch {
+        // No network / server not ready / Jedi not installed
+        // - local candidates below still carry the popup.
+        return [];
+    }
+}
+function renderHintItem(elt, data, cur) {
+    const icon = document.createElement("span");
+    icon.className =
+        "hint-icon hint-icon-" + (cur.type || "text");
+    icon.textContent = HINT_ICON_LETTER[cur.type] || "\u2022";
+    elt.appendChild(icon);
+    const label = document.createElement("span");
+    label.className = "hint-label";
+    label.textContent = cur.text;
+    elt.appendChild(label);
+    if (cur.detail) {
+        const detail = document.createElement("span");
+        detail.className = "hint-detail";
+        detail.textContent = cur.detail;
+        elt.appendChild(detail);
+    }
+}
+function smartPythonHint(instance, callback) {
+    const range = currentWordRange(instance);
+    const prefix = instance.getRange(range.from, range.to);
+    const isPython = isLintableFile(currentFile);
+    const charBefore =
+        range.from.ch > 0 ?
+            instance
+                .getLine(range.from.line)
+                .charAt(range.from.ch - 1) :
+            "";
+    const afterDot = charBefore === ".";
+    const finish = (serverCandidates) => {
+        const seen = new Set();
+        const list = [];
+        serverCandidates.forEach((cand) => {
+            if (
+                cand.text &&
+                cand.text.startsWith(prefix) &&
+                !seen.has(cand.text)
+            ) {
+                seen.add(cand.text);
+                list.push(cand);
+            }
+        });
+        const fallback = isPython ?
+            localCandidates(instance, prefix, afterDot) :
+            (afterDot ?
+                [] :
+                localCandidates(instance, prefix, true)
+                    .concat(
+                        (
+                            instance.getValue().match(
+                                /[A-Za-z_][A-Za-z0-9_]*/g
+                            ) || []
+                        )
+                            .filter((v, i, a) =>
+                                a.indexOf(v) === i &&
+                                v.startsWith(prefix) &&
+                                v !== prefix
+                            )
+                            .map((name) => (
+                                { text: name, type: "variable" }
+                            ))
+                    ));
+        fallback.forEach((cand) => {
+            if (!seen.has(cand.text)) {
+                seen.add(cand.text);
+                list.push(cand);
+            }
+        });
+        callback({
+            list: list.slice(0, 50).map((cand) => ({
+                text: cand.text,
+                type: cand.type,
+                detail: cand.detail,
+                render: renderHintItem,
+                from: range.from,
+                to: range.to
+            })),
+            from: range.from,
+            to: range.to
+        });
+    };
+    if (isPython && currentFile) {
+        fetchServerCompletions(
+            currentFile,
+            instance.getValue(),
+            instance.getCursor()
+        ).then(finish);
+    }
+    else {
+        finish([]);
+    }
+}
+smartPythonHint.async = true;
 const cm =
     CodeMirror.fromTextArea(
         editor,
@@ -73,6 +286,10 @@ const cm =
                 "CodeMirror-linenumbers",
                 "CodeMirror-foldgutter"
             ],
+            hintOptions: {
+                hint: smartPythonHint,
+                completeSingle: false
+            },
             extraKeys: {
                 "Tab": function(instance) {
                     if (
@@ -132,6 +349,20 @@ const cm =
                 },
                 "Cmd-0": function() {
                     resetEditorFontSize();
+                },
+                "Ctrl-Space": function(instance) {
+                    CodeMirror.showHint(
+                        instance,
+                        smartPythonHint,
+                        { completeSingle: false }
+                    );
+                },
+                "Cmd-Space": function(instance) {
+                    CodeMirror.showHint(
+                        instance,
+                        smartPythonHint,
+                        { completeSingle: false }
+                    );
                 }
             }
         }
@@ -413,6 +644,47 @@ function jumpToNextProblem() {
     cm.scrollIntoView({ line: diag.line, ch: diag.col }, 100);
     cm.focus();
 }
+/* =====================================================
+   AUTOCOMPLETE TRIGGER
+   Opens the hint popup while typing, VS Code-style:
+   immediately after ".", with a short debounce after any
+   other word character. Skipped inside strings/comments -
+   nobody wants "print" suggested while writing a comment.
+===================================================== */
+let autocompleteTimer = null;
+cm.on("inputRead", function(instance, changeObj) {
+    if (
+        changeObj.origin &&
+        changeObj.origin.indexOf("+delete") === 0
+    ) {
+        return;
+    }
+    if (!changeObj.text || changeObj.text.length !== 1) {
+        return;
+    }
+    const typed = changeObj.text[0];
+    if (!/^[\w.]$/.test(typed)) {
+        return;
+    }
+    const pos = instance.getCursor();
+    const tokenType = instance.getTokenTypeAt(pos);
+    if (tokenType && /comment|string/.test(tokenType)) {
+        return;
+    }
+    clearTimeout(autocompleteTimer);
+    autocompleteTimer = setTimeout(
+        () => {
+            if (!instance.state.completionActive) {
+                CodeMirror.showHint(
+                    instance,
+                    smartPythonHint,
+                    { completeSingle: false }
+                );
+            }
+        },
+        typed === "." ? 20 : 200
+    );
+});
 /* =====================================================
    EDITOR FONT ZOOM
    Ctrl/Cmd +/- and Ctrl/Cmd+0, like every real IDE.
