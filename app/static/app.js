@@ -2356,8 +2356,11 @@ function replaceAll() {
     runFind(query);
 }
 function openFindPanel(withReplace) {
-    findPanelEl.hidden = false;
-    findReplaceRowEl.hidden = !withReplace;
+    findPanelEl.classList.add("show");
+    findReplaceRowEl.classList.toggle(
+        "show",
+        !!withReplace
+    );
     if (cm.somethingSelected()) {
         findInputEl.value = cm.getSelection();
     }
@@ -2366,15 +2369,16 @@ function openFindPanel(withReplace) {
     runFind(findInputEl.value);
 }
 function closeFindPanel() {
-    findPanelEl.hidden = true;
+    findPanelEl.classList.remove("show");
     clearFindHighlights();
     findActiveIndex = -1;
     updateFindCount();
     cm.focus();
 }
 function toggleFindReplaceRow() {
-    findReplaceRowEl.hidden = !findReplaceRowEl.hidden;
-    if (!findReplaceRowEl.hidden) {
+    const isShown =
+        findReplaceRowEl.classList.toggle("show");
+    if (isShown) {
         replaceInputEl.focus();
     }
 }
@@ -3734,7 +3738,19 @@ function runQuickPickerItem(index) {
         return;
     }
     closeQuickPicker();
-    item.action();
+    /*
+     * Deferred to the next tick: this runs from a
+     * "mousedown" handler that also calls preventDefault()
+     * (see below), and calling something like .focus()
+     * synchronously in that same handler is unreliable on
+     * mobile browsers - the browser hasn't finished its own
+     * gesture handling yet. Letting it finish first (same
+     * fix already used for focusing the picker's own input
+     * on open) makes whatever the command does - including
+     * opening another panel and focusing its input - land
+     * correctly.
+     */
+    setTimeout(() => item.action(), 0);
 }
 function moveQuickPickerSelection(delta) {
     if (quickPickerFiltered.length === 0) {
