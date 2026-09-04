@@ -54,6 +54,23 @@
         src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/fold/brace-fold.min.js"
     ></script>
     <!-- =========================
+         AUTOCOMPLETE (CodeMirror
+         show-hint)
+         Powers the suggestion
+         dropdown - see
+         smartPythonHint() in
+         app.js, which merges this
+         with server-side (Jedi)
+         completions.
+    ========================= -->
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css"
+    >
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"
+    ></script>
+    <!-- =========================
          TERMINAL (xterm.js)
          A real, interactive terminal
          attached to a shell process
