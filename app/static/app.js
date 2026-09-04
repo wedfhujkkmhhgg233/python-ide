@@ -146,7 +146,7 @@ function localCandidates(instance, prefix, afterDot) {
 }
 async function fetchServerCompletions(path, content, pos) {
     if (!currentProject) {
-        return [];
+        return { completions: [], debug: "no currentProject" };
     }
     try {
         const data = await api(
@@ -166,12 +166,23 @@ async function fetchServerCompletions(path, content, pos) {
                 })
             }
         );
-        return data.completions || [];
+        return {
+            completions: data.completions || [],
+            debug:
+                "/complete: available=" + data.available +
+                ", " + (data.completions || []).length +
+                " from server"
+        };
     }
-    catch {
+    catch (err) {
         // No network / server not ready / Jedi not installed
         // - local candidates below still carry the popup.
-        return [];
+        return {
+            completions: [],
+            debug:
+                "/complete FAILED: " +
+                (err && err.message ? err.message : err)
+        };
     }
 }
 function renderHintItem(elt, data, cur) {
@@ -254,15 +265,16 @@ function smartPythonHint(instance, callback) {
             to: range.to
         };
     };
-    const report = (result) => {
+    const report = (result, debugSuffix) => {
         showDebugToast(
             "smartPythonHint -> " +
-            result.list.length + " item(s)"
+            result.list.length + " item(s)" +
+            (debugSuffix ? " | " + debugSuffix : "")
         );
         callback(result);
     };
     if (!isPython || !currentFile) {
-        report(buildResult([]));
+        report(buildResult([]), "not a lintable/open .py file");
         return;
     }
     /*
@@ -279,13 +291,13 @@ function smartPythonHint(instance, callback) {
             return;
         }
         settled = true;
-        report(buildResult([]));
+        report(buildResult([]), "350ms timeout, no server reply yet");
     }, 350);
     fetchServerCompletions(
         currentFile,
         instance.getValue(),
         instance.getCursor()
-    ).then((serverCandidates) => {
+    ).then((serverResult) => {
         if (settled) {
             // Local-only result already shown - too late to
             // swap it out from under the user.
@@ -293,7 +305,10 @@ function smartPythonHint(instance, callback) {
         }
         settled = true;
         clearTimeout(localOnlyTimer);
-        report(buildResult(serverCandidates));
+        report(
+            buildResult(serverResult.completions),
+            serverResult.debug
+        );
     });
 }
 smartPythonHint.async = true;
