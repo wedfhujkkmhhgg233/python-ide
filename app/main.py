@@ -1380,19 +1380,38 @@ def _jedi_completions(
     line: int,
     column: int
 ):
+    """
+    Returns (results, debug_info). debug_info is a short string
+    describing what actually happened - kept separate from the
+    completions themselves so the caller can surface it without
+    it looking like a real suggestion.
+    """
+
     if jedi is None:
-        return []
+        return [], "jedi is None (import failed at startup)"
+
+    import time as _time
+
+    t0 = _time.monotonic()
 
     try:
         script = jedi.Script(code=content, path=filename)
-        completions = script.complete(line=line, column=column)
+        script_ms = round((_time.monotonic() - t0) * 1000)
 
-    except Exception:
+        t1 = _time.monotonic()
+        completions = script.complete(line=line, column=column)
+        complete_ms = round((_time.monotonic() - t1) * 1000)
+
+    except Exception as exc:
         # Jedi is generally tolerant of broken/incomplete code
         # (that's the whole point, mid-typing), but it's still
         # third-party static analysis running on arbitrary
-        # user text - never let it 500 the request.
-        return []
+        # user text - never let it 500 the request. Still worth
+        # knowing WHAT broke, though.
+        return [], (
+            "jedi raised " + type(exc).__name__ +
+            ": " + str(exc)[:150]
+        )
 
     results = []
 
@@ -1421,7 +1440,11 @@ def _jedi_completions(
         except Exception:
             continue
 
-    return results
+    return results, (
+        "Script() " + str(script_ms) + "ms, complete() " +
+        str(complete_ms) + "ms, " + str(len(completions)) +
+        " raw jedi completions"
+    )
 
 
 @app.post(
@@ -1461,17 +1484,26 @@ async def complete_file(
     if not path.lower().endswith(".py") or jedi is None:
         return {
             "completions": [],
-            "available": jedi is not None
+            "available": jedi is not None,
+            "debugInfo":
+                "skipped - not a .py path" if jedi else
+                "jedi is None (import failed at startup)"
         }
 
     filename = path.rsplit("/", 1)[-1] or "<file>"
 
+    debug_info = "n/a"
+
     try:
         # Jedi's own analysis can occasionally be slow on
         # large/unusual files - run it off the event loop and
-        # give it a hard ceiling so one slow completion request
-        # can't stall the terminal/other requests behind it.
-        results = await asyncio.wait_for(
+        # give it a generous ceiling (this is a TEMPORARY wide
+        # timeout for debugging actual latency; tighten once
+        # we know real numbers) so one slow completion request
+        # can't stall the terminal/other requests behind it
+        # forever, but also doesn't get cut off before Jedi
+        # genuinely finishes.
+        results, debug_info = await asyncio.wait_for(
             asyncio.to_thread(
                 _jedi_completions,
                 content,
@@ -1479,15 +1511,17 @@ async def complete_file(
                 line + 1,
                 col
             ),
-            timeout=3.0
+            timeout=10.0
         )
 
     except asyncio.TimeoutError:
         results = []
+        debug_info = "server-side 10s timeout - jedi truly hung"
 
     return {
         "completions": results,
-        "available": True
+        "available": True,
+        "debugInfo": debug_info
     }
 
 
