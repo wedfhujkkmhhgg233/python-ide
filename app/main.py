@@ -33,6 +33,16 @@ try:
 except ImportError:  # pragma: no cover
     PyflakesChecker = None
 
+# Used by the /complete endpoint (autocomplete / IntelliSense)
+# for real completions - object attributes, imported names,
+# function signatures. Optional import, same reasoning as
+# pyflakes above: the frontend already has a local fallback
+# (document words + keywords/builtins) if this isn't installed.
+try:
+    import jedi
+except ImportError:  # pragma: no cover
+    jedi = None
+
 # Postgres-backed persistence (see the "PERSISTENCE" section below).
 # Optional import so the app still starts locally even if this
 # hasn't been installed / no database is configured.
@@ -1346,6 +1356,138 @@ async def lint_file(
         "diagnostics": diagnostics,
         "linted": True,
         "pyflakesAvailable": PyflakesChecker is not None
+    }
+
+
+# =========================================================
+# AUTOCOMPLETE (IntelliSense)
+# =========================================================
+#
+# Backed by Jedi, which does real static analysis - it knows
+# what's on an object after ".", what a function's parameters
+# are, and can see names from other files in the project (not
+# just the one currently open). Like /lint, this works against
+# whatever's in the editor right now, not the saved file.
+#
+# Jedi is skipped (not treated as an error) if it isn't
+# installed - the frontend already has a local fallback built
+# from document words + keywords/builtins, so autocomplete
+# still works, just without the "understands your code" part.
+
+def _jedi_completions(
+    content: str,
+    filename: str,
+    line: int,
+    column: int
+):
+    if jedi is None:
+        return []
+
+    try:
+        script = jedi.Script(code=content, path=filename)
+        completions = script.complete(line=line, column=column)
+
+    except Exception:
+        # Jedi is generally tolerant of broken/incomplete code
+        # (that's the whole point, mid-typing), but it's still
+        # third-party static analysis running on arbitrary
+        # user text - never let it 500 the request.
+        return []
+
+    results = []
+
+    for completion in completions[:40]:
+        try:
+            detail = ""
+
+            try:
+                sig = completion.get_signatures()
+
+                if sig:
+                    detail = sig[0].to_string()
+
+            except Exception:
+                detail = ""
+
+            if not detail:
+                detail = (completion.description or "")[:80]
+
+            results.append({
+                "text": completion.name,
+                "type": completion.type,
+                "detail": detail[:80]
+            })
+
+        except Exception:
+            continue
+
+    return results
+
+
+@app.post(
+    "/api/projects/{project_id}/complete"
+)
+async def complete_file(
+    project_id: str,
+    request: Request
+):
+    data = await request.json()
+
+    path = str(data.get("path", "")).strip()
+    content = data.get("content", "")
+
+    try:
+        line = int(data.get("line", 0))
+        col = int(data.get("col", 0))
+
+    except (TypeError, ValueError):
+        return JSONResponse(
+            {
+                "error":
+                "line and col must be integers"
+            },
+            status_code=400
+        )
+
+    if not isinstance(content, str):
+        return JSONResponse(
+            {
+                "error":
+                "Content must be a string"
+            },
+            status_code=400
+        )
+
+    if not path.lower().endswith(".py") or jedi is None:
+        return {
+            "completions": [],
+            "available": jedi is not None
+        }
+
+    filename = path.rsplit("/", 1)[-1] or "<file>"
+
+    try:
+        # Jedi's own analysis can occasionally be slow on
+        # large/unusual files - run it off the event loop and
+        # give it a hard ceiling so one slow completion request
+        # can't stall the terminal/other requests behind it.
+        results = await asyncio.wait_for(
+            asyncio.to_thread(
+                _jedi_completions,
+                content,
+                filename,
+                line + 1,
+                col
+            ),
+            timeout=3.0
+        )
+
+    except asyncio.TimeoutError:
+        results = []
+
+    return {
+        "completions": results,
+        "available": True
     }
 
 
