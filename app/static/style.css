@@ -1020,6 +1020,11 @@ input:focus-visible,
     width: 22px;
     height: 22px;
 }
+.icon-sm {
+    width: 11px;
+    height: 11px;
+    vertical-align: -1px;
+}
 .icon-xl {
     width: 34px;
     height: 34px;
@@ -1156,6 +1161,106 @@ button,
 #editorStatusBar span:first-child {
     color: var(--accent);
     font-weight: 600;
+}
+/* =========================
+   PROBLEMS INDICATOR
+   Lives in the status bar,
+   next to the encoding. Click
+   cycles through diagnostics
+   like VS Code's problem
+   count does.
+========================= */
+.status-problems {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    padding: 2px 6px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font: inherit;
+    cursor: pointer;
+}
+.status-problems:hover {
+    background: var(--surface-hover);
+}
+.status-problems.ok .icon {
+    color: var(--success);
+}
+.status-problems.has-problems {
+    color: var(--text-soft);
+}
+.status-problems.has-problems .icon {
+    color: var(--danger);
+}
+.status-problems.warnings-only .icon {
+    color: var(--warning);
+}
+.status-problems.linting {
+    opacity: 0.6;
+}
+/* =========================
+   INLINE LINT DIAGNOSTICS
+   Squiggly underlines under
+   the offending token, plus a
+   gutter dot per bad line -
+   same idea as VS Code's red/
+   yellow squiggles.
+========================= */
+.CodeMirror-lint-marker-error,
+.CodeMirror-lint-marker-warning {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 50%;
+    cursor: default;
+}
+.CodeMirror-lint-marker-error {
+    background: var(--danger);
+    box-shadow: 0 0 0 2px rgba(240, 102, 93, 0.25);
+}
+.CodeMirror-lint-marker-warning {
+    background: var(--warning);
+    box-shadow: 0 0 0 2px rgba(210, 153, 34, 0.25);
+}
+.cm-lint-error,
+.cm-lint-warning {
+    background-repeat: repeat-x;
+    background-position: left bottom;
+    padding-bottom: 1px;
+}
+.cm-lint-error {
+    background-image: linear-gradient(
+        45deg,
+        transparent 65%,
+        var(--danger) 80%,
+        transparent 90%
+    ),
+    linear-gradient(
+        135deg,
+        var(--danger) 20%,
+        transparent 35%,
+        transparent 100%
+    );
+    background-size: 5px 4px;
+}
+.cm-lint-warning {
+    background-image: linear-gradient(
+        45deg,
+        transparent 65%,
+        var(--warning) 80%,
+        transparent 90%
+    ),
+    linear-gradient(
+        135deg,
+        var(--warning) 20%,
+        transparent 35%,
+        transparent 100%
+    );
+    background-size: 5px 4px;
 }
 /* =========================
    MOBILE CODING TOOLBAR
@@ -1596,6 +1701,9 @@ button,
 ===================================================== */
 .CodeMirror-foldgutter {
     width: 14px;
+}
+.CodeMirror-lint-markers {
+    width: 12px;
 }
 .CodeMirror-foldgutter-open,
 .CodeMirror-foldgutter-folded {
