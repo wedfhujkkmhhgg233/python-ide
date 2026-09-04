@@ -7,11 +7,13 @@ from fastapi.staticfiles import StaticFiles
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+import ast
 import asyncio
 import base64
 import importlib.util
 import json
 import os
+import re
 import signal
 import struct
 import subprocess
@@ -20,6 +22,16 @@ import tempfile
 import uuid
 import shutil
 import zipfile
+
+# Used by the /lint endpoint (inline diagnostics) to flag things
+# beyond plain syntax errors - unused imports, undefined names,
+# unused variables, etc. Optional import so the app still starts
+# (with linting simply falling back to syntax-only checks) if it
+# hasn't been installed yet.
+try:
+    from pyflakes.checker import Checker as PyflakesChecker
+except ImportError:  # pragma: no cover
+    PyflakesChecker = None
 
 # Postgres-backed persistence (see the "PERSISTENCE" section below).
 # Optional import so the app still starts locally even if this
@@ -1183,6 +1195,157 @@ async def write_file(
     return {
         "ok": True,
         "path": path
+    }
+
+
+# =========================================================
+# LINT (inline diagnostics)
+# =========================================================
+#
+# Two layers, cheapest/most-reliable first:
+#   1. ast.parse() - always available, catches real syntax
+#      errors (the file literally won't run).
+#   2. pyflakes' Checker - catches "runs fine but is probably
+#      wrong": unused imports, undefined names, unused local
+#      variables, duplicate arguments, etc. Skipped entirely
+#      (rather than erroring the request) if pyflakes isn't
+#      installed, or if anything about it misbehaves - a lint
+#      pass should never be able to break the editor.
+#
+# Diagnostics are returned as 0-based line/col so the frontend
+# can hand them straight to CodeMirror without translating.
+
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _token_end_col(line_text: str, col: int) -> int:
+    """
+    Best-effort width for the squiggly underline: the
+    identifier/word starting at `col`, or just one character
+    if there isn't a clean word there (e.g. a bare ':').
+    """
+
+    match = _IDENTIFIER_RE.match(line_text, col)
+
+    if match:
+        return match.end()
+
+    return min(col + 1, len(line_text)) if line_text else col + 1
+
+
+def _lint_python_source(source: str, filename: str = "<file>"):
+    diagnostics = []
+
+    try:
+        tree = ast.parse(source, filename=filename)
+
+    except SyntaxError as exc:
+        line = max((exc.lineno or 1) - 1, 0)
+        col = max((exc.offset or 1) - 1, 0)
+
+        diagnostics.append({
+            "line": line,
+            "col": col,
+            "endCol": col + 1,
+            "severity": "error",
+            "message": exc.msg or "Invalid syntax",
+            "source": "python"
+        })
+
+        return diagnostics
+
+    except (ValueError, RecursionError):
+        # Malformed source ast.parse can't even attempt (e.g.
+        # a stray null byte) - fail quiet, no diagnostics.
+        return diagnostics
+
+    if PyflakesChecker is None:
+        return diagnostics
+
+    try:
+        checker = PyflakesChecker(tree, filename=filename)
+        messages = list(checker.messages)
+
+    except Exception:
+        # pyflakes choked on something CPython's own parser
+        # accepted (has happened, is rare, is never worth a
+        # 500 - the user just gets syntax-only diagnostics).
+        return diagnostics
+
+    source_lines = source.splitlines()
+
+    for message in messages:
+        try:
+            line = max(message.lineno - 1, 0)
+            col = max(getattr(message, "col", 0), 0)
+            text = message.message % message.message_args
+
+        except Exception:
+            continue
+
+        line_text = (
+            source_lines[line]
+            if line < len(source_lines)
+            else ""
+        )
+
+        diagnostics.append({
+            "line": line,
+            "col": col,
+            "endCol": _token_end_col(line_text, col),
+            "severity": "warning",
+            "message": text,
+            "source": "pyflakes"
+        })
+
+    diagnostics.sort(key=lambda d: (d["line"], d["col"]))
+
+    return diagnostics
+
+
+@app.post(
+    "/api/projects/{project_id}/lint"
+)
+async def lint_file(
+    project_id: str,
+    request: Request
+):
+    """
+    Lints Python source and returns structured diagnostics.
+    Takes the *unsaved* editor content directly (not a path
+    read from disk) so it can run continuously as the user
+    types, not just after Save.
+    """
+
+    data = await request.json()
+
+    path = str(data.get("path", "")).strip()
+    content = data.get("content", "")
+
+    if not isinstance(content, str):
+        return JSONResponse(
+            {
+                "error":
+                "Content must be a string"
+            },
+            status_code=400
+        )
+
+    if not path.lower().endswith(".py"):
+        return {
+            "diagnostics": [],
+            "linted": False
+        }
+
+    diagnostics = _lint_python_source(
+        content,
+        filename=path.rsplit("/", 1)[-1] or "<file>"
+    )
+
+    return {
+        "diagnostics": diagnostics,
+        "linted": True,
+        "pyflakesAvailable": PyflakesChecker is not None
     }
 
 
