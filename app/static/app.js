@@ -3739,18 +3739,16 @@ function runQuickPickerItem(index) {
     }
     closeQuickPicker();
     /*
-     * Deferred to the next tick: this runs from a
-     * "mousedown" handler that also calls preventDefault()
-     * (see below), and calling something like .focus()
-     * synchronously in that same handler is unreliable on
-     * mobile browsers - the browser hasn't finished its own
-     * gesture handling yet. Letting it finish first (same
-     * fix already used for focusing the picker's own input
-     * on open) makes whatever the command does - including
-     * opening another panel and focusing its input - land
-     * correctly.
+     * Run synchronously, still inside the original
+     * mousedown's user-gesture context. Deferring this via
+     * setTimeout() used to be here to dodge a race with the
+     * picker input's blur handler, but that handler no
+     * longer exists - and the deferral broke mobile: focus()
+     * calls made outside the gesture's call stack don't
+     * reliably raise the on-screen keyboard, so Find/Replace
+     * appeared to do nothing on phones.
      */
-    setTimeout(() => item.action(), 0);
+    item.action();
 }
 function moveQuickPickerSelection(delta) {
     if (quickPickerFiltered.length === 0) {
