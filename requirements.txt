@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 pyflakes
+jedi
 opencv-contrib-python-headless==4.13.0.92
 numpy
 asyncpg
