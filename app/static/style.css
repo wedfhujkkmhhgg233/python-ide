@@ -502,7 +502,7 @@ input:focus-visible,
     height: 100%;
     width: 100%;
     font-family: var(--font-mono);
-    font-size: 15px;
+    font-size: var(--editor-font-size, 15px);
     line-height: 1.55;
 }
 .cm-s-ideDark.CodeMirror {
@@ -959,8 +959,12 @@ input:focus-visible,
         height: 100%;
     }
     #main .CodeMirror {
-        /* keep >=16px so iOS/Android don't zoom in on focus */
-        font-size: 16px;
+        /*
+         * Keep >=16px so iOS/Android don't zoom in on
+         * focus, but still let the user zoom in further
+         * with Ctrl/Cmd +.
+         */
+        font-size: max(16px, var(--editor-font-size, 15px));
     }
     #projectSelect {
         font-size: 16px;
