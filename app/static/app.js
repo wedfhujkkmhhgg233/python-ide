@@ -213,6 +213,29 @@ cm.on("cursorActivity", () => {
     }
     saveStoredCursor(currentFile, pos);
 });
+/*
+ * Pure scrolling (mouse wheel/trackpad, no click or
+ * keypress) never fires "cursorActivity" - the caret
+ * hasn't moved, only the viewport has - so it needs its
+ * own listener, or "scrolled down to read something" never
+ * gets remembered. Debounced since "scroll" fires on every
+ * pixel of movement.
+ */
+let scrollSaveTimer = null;
+cm.on("scroll", () => {
+    if (!currentFile) {
+        return;
+    }
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = setTimeout(() => {
+        const entry = findOpenFile(currentFile);
+        const top = cm.getScrollInfo().top;
+        if (entry) {
+            entry.scrollTop = top;
+        }
+        saveStoredCursor(currentFile, cm.getCursor(), top);
+    }, 300);
+});
 /* =====================================================
    EDITOR FONT ZOOM
    Ctrl/Cmd +/- and Ctrl/Cmd+0, like every real IDE.
@@ -2521,11 +2544,19 @@ function isFileDirty(entry) {
     return entry.content !== entry.savedContent;
 }
 /*
- * Cursor position per file, like VS Code remembers where
- * you left off. Kept in localStorage (not just the
- * in-memory `openFiles` entry) so it survives closing the
- * tab or reloading the page, not just switching tabs
- * within the same session.
+ * Cursor + scroll position per file, like VS Code
+ * remembers where you left off. Kept in localStorage (not
+ * just the in-memory `openFiles` entry) so it survives
+ * closing the tab or reloading the page, not just
+ * switching tabs within the same session.
+ *
+ * These are two different things in CodeMirror: the
+ * cursor is where the text caret sits (only moves via
+ * click/typing/arrow keys), while scrollTop is just the
+ * viewport's scroll offset (moves on mouse wheel/trackpad
+ * scrolling alone, with no caret movement at all). Tracking
+ * only the cursor misses the common case of scrolling down
+ * to read something without clicking into it.
  */
 function cursorStorageKey(path) {
     return "cursorPos:" + currentProject + ":" + path;
@@ -2549,11 +2580,18 @@ function loadStoredCursor(path) {
     catch {}
     return null;
 }
-function saveStoredCursor(path, pos) {
+function saveStoredCursor(path, pos, scrollTop) {
     try {
         localStorage.setItem(
             cursorStorageKey(path),
-            JSON.stringify({ line: pos.line, ch: pos.ch })
+            JSON.stringify({
+                line: pos.line,
+                ch: pos.ch,
+                scrollTop:
+                    typeof scrollTop === "number" ?
+                        scrollTop :
+                        cm.getScrollInfo().top
+            })
         );
     }
     catch {}
@@ -2573,7 +2611,12 @@ function captureActiveTabContent() {
     if (entry) {
         entry.content = cm.getValue();
         entry.cursor = cm.getCursor();
-        saveStoredCursor(currentFile, entry.cursor);
+        entry.scrollTop = cm.getScrollInfo().top;
+        saveStoredCursor(
+            currentFile,
+            entry.cursor,
+            entry.scrollTop
+        );
     }
 }
 async function saveFileToServer(path, content) {
@@ -2621,15 +2664,30 @@ function activateTab(path) {
     dirtyIndicator.style.display =
         isFileDirty(entry) ? "inline" : "none";
     /*
-     * setValue() resets the cursor to the very top, so put
-     * it back where it was last time this file was open -
-     * CodeMirror clips out-of-range positions automatically
-     * if the file has since gotten shorter.
+     * setValue() resets the cursor and scroll to the very
+     * top, so put both back where they were last time this
+     * file was open. CodeMirror clips out-of-range cursor
+     * positions automatically if the file has since gotten
+     * shorter.
      */
     if (entry.cursor) {
         cm.setCursor(entry.cursor);
-        cm.scrollIntoView(entry.cursor, 100);
     }
+    /*
+     * Deferred one frame: on mobile, activateTab() runs
+     * before the editor panel is switched into view (see
+     * openFile()/switchToTab() below), so CodeMirror may
+     * still be display:none right here and can't measure
+     * line heights to scroll correctly while hidden.
+     */
+    requestAnimationFrame(() => {
+        if (typeof entry.scrollTop === "number") {
+            cm.scrollTo(null, entry.scrollTop);
+        }
+        else if (entry.cursor) {
+            cm.scrollIntoView(entry.cursor, 100);
+        }
+    });
     renderTabs();
 }
 function switchToTab(path) {
