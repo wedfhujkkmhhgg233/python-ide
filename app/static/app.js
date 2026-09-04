@@ -107,6 +107,30 @@ const cm =
                 },
                 "Cmd-Alt-F": function() {
                     openFindPanel(true);
+                },
+                "Ctrl-=": function() {
+                    changeEditorFontSize(1);
+                },
+                "Ctrl-Shift-=": function() {
+                    changeEditorFontSize(1);
+                },
+                "Cmd-=": function() {
+                    changeEditorFontSize(1);
+                },
+                "Cmd-Shift-=": function() {
+                    changeEditorFontSize(1);
+                },
+                "Ctrl--": function() {
+                    changeEditorFontSize(-1);
+                },
+                "Cmd--": function() {
+                    changeEditorFontSize(-1);
+                },
+                "Ctrl-0": function() {
+                    resetEditorFontSize();
+                },
+                "Cmd-0": function() {
+                    resetEditorFontSize();
                 }
             }
         }
@@ -178,6 +202,61 @@ function refreshCursorStatus() {
         "Ln " + (pos.line + 1) + ", Col " + (pos.ch + 1);
 }
 cm.on("cursorActivity", refreshCursorStatus);
+cm.on("cursorActivity", () => {
+    if (!currentFile) {
+        return;
+    }
+    const entry = findOpenFile(currentFile);
+    const pos = cm.getCursor();
+    if (entry) {
+        entry.cursor = pos;
+    }
+    saveStoredCursor(currentFile, pos);
+});
+/* =====================================================
+   EDITOR FONT ZOOM
+   Ctrl/Cmd +/- and Ctrl/Cmd+0, like every real IDE.
+   Persisted in localStorage so it survives a reload. The
+   mobile media query in style.css keeps its own 16px
+   floor (to stop iOS auto-zooming on input focus) on top
+   of whatever size is picked here.
+===================================================== */
+const EDITOR_FONT_SIZE_KEY = "editorFontSize";
+const EDITOR_FONT_SIZE_DEFAULT = 15;
+const EDITOR_FONT_SIZE_MIN = 10;
+const EDITOR_FONT_SIZE_MAX = 28;
+function getEditorFontSize() {
+    const stored = parseInt(
+        localStorage.getItem(EDITOR_FONT_SIZE_KEY),
+        10
+    );
+    return Number.isFinite(stored) ?
+        stored :
+        EDITOR_FONT_SIZE_DEFAULT;
+}
+function applyEditorFontSize(px) {
+    document.documentElement.style.setProperty(
+        "--editor-font-size",
+        px + "px"
+    );
+    cm.refresh();
+}
+function setEditorFontSize(px) {
+    const clamped = Math.min(
+        EDITOR_FONT_SIZE_MAX,
+        Math.max(EDITOR_FONT_SIZE_MIN, px)
+    );
+    localStorage.setItem(EDITOR_FONT_SIZE_KEY, clamped);
+    applyEditorFontSize(clamped);
+}
+function changeEditorFontSize(delta) {
+    setEditorFontSize(getEditorFontSize() + delta);
+}
+function resetEditorFontSize() {
+    localStorage.removeItem(EDITOR_FONT_SIZE_KEY);
+    applyEditorFontSize(EDITOR_FONT_SIZE_DEFAULT);
+}
+applyEditorFontSize(getEditorFontSize());
 const output = document.getElementById("output");
 
 /* =====================================================
@@ -2442,6 +2521,44 @@ function isFileDirty(entry) {
     return entry.content !== entry.savedContent;
 }
 /*
+ * Cursor position per file, like VS Code remembers where
+ * you left off. Kept in localStorage (not just the
+ * in-memory `openFiles` entry) so it survives closing the
+ * tab or reloading the page, not just switching tabs
+ * within the same session.
+ */
+function cursorStorageKey(path) {
+    return "cursorPos:" + currentProject + ":" + path;
+}
+function loadStoredCursor(path) {
+    try {
+        const raw = localStorage.getItem(
+            cursorStorageKey(path)
+        );
+        if (!raw) {
+            return null;
+        }
+        const pos = JSON.parse(raw);
+        if (
+            typeof pos.line === "number" &&
+            typeof pos.ch === "number"
+        ) {
+            return pos;
+        }
+    }
+    catch {}
+    return null;
+}
+function saveStoredCursor(path, pos) {
+    try {
+        localStorage.setItem(
+            cursorStorageKey(path),
+            JSON.stringify({ line: pos.line, ch: pos.ch })
+        );
+    }
+    catch {}
+}
+/*
  * Call before switching the active tab (or closing/
  * reloading/switching projects) so whatever's currently
  * in CodeMirror is captured into its own entry - the
@@ -2455,6 +2572,8 @@ function captureActiveTabContent() {
     const entry = findOpenFile(currentFile);
     if (entry) {
         entry.content = cm.getValue();
+        entry.cursor = cm.getCursor();
+        saveStoredCursor(currentFile, entry.cursor);
     }
 }
 async function saveFileToServer(path, content) {
@@ -2501,6 +2620,16 @@ function activateTab(path) {
     updateStatusLine(path);
     dirtyIndicator.style.display =
         isFileDirty(entry) ? "inline" : "none";
+    /*
+     * setValue() resets the cursor to the very top, so put
+     * it back where it was last time this file was open -
+     * CodeMirror clips out-of-range positions automatically
+     * if the file has since gotten shorter.
+     */
+    if (entry.cursor) {
+        cm.setCursor(entry.cursor);
+        cm.scrollIntoView(entry.cursor, 100);
+    }
     renderTabs();
 }
 function switchToTab(path) {
@@ -2759,7 +2888,8 @@ async function openFile(
         openFiles.push({
             path: path,
             content: data.content,
-            savedContent: data.content
+            savedContent: data.content,
+            cursor: loadStoredCursor(path)
         });
         activateTab(path);
         /*
@@ -3530,6 +3660,24 @@ const COMMAND_PALETTE_ITEMS = [
         icon: "edit",
         shortcut: "Ctrl+H",
         action: () => openFindPanel(true)
+    },
+    {
+        label: "Zoom In",
+        icon: "zoom-in",
+        shortcut: "Ctrl+=",
+        action: () => changeEditorFontSize(1)
+    },
+    {
+        label: "Zoom Out",
+        icon: "zoom-out",
+        shortcut: "Ctrl+-",
+        action: () => changeEditorFontSize(-1)
+    },
+    {
+        label: "Reset Zoom",
+        icon: "refresh",
+        shortcut: "Ctrl+0",
+        action: () => resetEditorFontSize()
     },
     {
         label: "Save File",
