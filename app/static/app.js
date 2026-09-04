@@ -2943,11 +2943,18 @@ async function openFile(
                 )}`
             );
         captureActiveTabContent();
+        const stored = loadStoredCursor(path);
         openFiles.push({
             path: path,
             content: data.content,
             savedContent: data.content,
-            cursor: loadStoredCursor(path)
+            cursor: stored ?
+                { line: stored.line, ch: stored.ch } :
+                null,
+            scrollTop:
+                stored && typeof stored.scrollTop === "number" ?
+                    stored.scrollTop :
+                    null
         });
         activateTab(path);
         /*
