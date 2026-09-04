@@ -69,6 +69,7 @@ const cm =
             lineWrapping: false,
             foldGutter: true,
             gutters: [
+                "CodeMirror-lint-markers",
                 "CodeMirror-linenumbers",
                 "CodeMirror-foldgutter"
             ],
@@ -154,6 +155,7 @@ cm.on(
             dirtyIndicator.style.display = "none";
         }
         updateActiveTabDirtyClass();
+        scheduleLint();
     }
 );
 /* =====================================================
@@ -236,6 +238,181 @@ cm.on("scroll", () => {
         saveStoredCursor(currentFile, cm.getCursor(), top);
     }, 300);
 });
+/* =====================================================
+   LINTING / INLINE DIAGNOSTICS
+   Squiggly underlines + gutter dots, like VS Code's
+   Problems. Runs server-side (ast + pyflakes) against
+   whatever's in the editor right now - not just what was
+   last saved - debounced while typing, and immediately on
+   open/save. Python files only; nothing else has a linter
+   wired up on the backend.
+===================================================== */
+const statusProblemsEl = document.getElementById("statusProblems");
+const statusProblemsCountEl = document.getElementById(
+    "statusProblemsCount"
+);
+let lintDebounceTimer = null;
+let lintRequestSeq = 0;
+let lintMarks = [];
+let currentDiagnostics = [];
+let problemCursorIndex = -1;
+function isLintableFile(path) {
+    return (
+        typeof path === "string" &&
+        path.toLowerCase().endsWith(".py")
+    );
+}
+function clearLintDisplay() {
+    lintMarks.forEach((mark) => mark.clear());
+    lintMarks = [];
+    cm.clearGutter("CodeMirror-lint-markers");
+    currentDiagnostics = [];
+    problemCursorIndex = -1;
+    renderProblemsStatus();
+}
+function renderProblemsStatus() {
+    if (!statusProblemsEl || !statusProblemsCountEl) {
+        return;
+    }
+    const errors = currentDiagnostics.filter(
+        (d) => d.severity === "error"
+    ).length;
+    const warnings = currentDiagnostics.length - errors;
+    statusProblemsCountEl.textContent = String(
+        currentDiagnostics.length
+    );
+    statusProblemsEl.classList.remove(
+        "ok", "has-problems", "warnings-only"
+    );
+    if (currentDiagnostics.length === 0) {
+        statusProblemsEl.classList.add("ok");
+        statusProblemsEl.title = isLintableFile(currentFile) ?
+            "No problems" :
+            "Linting applies to .py files";
+        return;
+    }
+    statusProblemsEl.classList.add(
+        errors > 0 ? "has-problems" : "warnings-only"
+    );
+    statusProblemsEl.title =
+        errors + " error" + (errors === 1 ? "" : "s") +
+        ", " + warnings + " warning" +
+        (warnings === 1 ? "" : "s") +
+        " - click to jump to next";
+}
+function applyDiagnostics(diagnostics) {
+    lintMarks.forEach((mark) => mark.clear());
+    lintMarks = [];
+    cm.clearGutter("CodeMirror-lint-markers");
+    currentDiagnostics = diagnostics;
+    problemCursorIndex = -1;
+    const lastLine = cm.lastLine();
+    diagnostics.forEach((diag) => {
+        if (diag.line < 0 || diag.line > lastLine) {
+            return;
+        }
+        const marker = document.createElement("div");
+        marker.className =
+            "CodeMirror-lint-marker-" + diag.severity;
+        marker.title = diag.message;
+        cm.setGutterMarker(
+            diag.line,
+            "CodeMirror-lint-markers",
+            marker
+        );
+        const lineLen = cm.getLine(diag.line).length;
+        const from = { line: diag.line, ch: diag.col };
+        const to = {
+            line: diag.line,
+            ch: Math.max(
+                diag.col + 1,
+                Math.min(diag.endCol, lineLen)
+            )
+        };
+        try {
+            lintMarks.push(
+                cm.markText(from, to, {
+                    className: "cm-lint-" + diag.severity,
+                    attributes: { title: diag.message },
+                    clearOnEnter: false
+                })
+            );
+        }
+        catch {
+            // Stale position (file changed after this
+            // response left the server) - skip the
+            // squiggle, gutter dot already landed above.
+        }
+    });
+    renderProblemsStatus();
+}
+async function lintCurrentFile() {
+    if (!currentProject || !currentFile) {
+        clearLintDisplay();
+        return;
+    }
+    if (!isLintableFile(currentFile)) {
+        clearLintDisplay();
+        return;
+    }
+    const path = currentFile;
+    const content = cm.getValue();
+    const requestId = ++lintRequestSeq;
+    statusProblemsEl?.classList.add("linting");
+    try {
+        const data = await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/lint`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ path, content })
+            }
+        );
+        /*
+         * The user may have switched files (or typed more)
+         * while this was in flight - a stale response
+         * landing now would paint the wrong file's errors
+         * onto the current one.
+         */
+        if (
+            requestId !== lintRequestSeq ||
+            currentFile !== path
+        ) {
+            return;
+        }
+        applyDiagnostics(data.diagnostics || []);
+    }
+    catch {
+        // Network hiccup / server cold-starting - not worth
+        // surfacing as an error, just try again next edit.
+    }
+    finally {
+        statusProblemsEl?.classList.remove("linting");
+    }
+}
+function scheduleLint() {
+    if (!isLintableFile(currentFile)) {
+        clearLintDisplay();
+        return;
+    }
+    clearTimeout(lintDebounceTimer);
+    lintDebounceTimer = setTimeout(lintCurrentFile, 600);
+}
+function jumpToNextProblem() {
+    if (currentDiagnostics.length === 0) {
+        return;
+    }
+    problemCursorIndex =
+        (problemCursorIndex + 1) % currentDiagnostics.length;
+    const diag = currentDiagnostics[problemCursorIndex];
+    cm.setCursor({ line: diag.line, ch: diag.col });
+    cm.scrollIntoView({ line: diag.line, ch: diag.col }, 100);
+    cm.focus();
+}
 /* =====================================================
    EDITOR FONT ZOOM
    Ctrl/Cmd +/- and Ctrl/Cmd+0, like every real IDE.
@@ -2689,6 +2866,13 @@ function activateTab(path) {
         }
     });
     renderTabs();
+    /*
+     * Lint right away on open instead of waiting for the
+     * 600ms debounce - switching files shouldn't feel like
+     * it takes a beat for diagnostics to catch up.
+     */
+    clearTimeout(lintDebounceTimer);
+    lintCurrentFile();
 }
 function switchToTab(path) {
     if (path === currentFile) {
