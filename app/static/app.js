@@ -66,7 +66,7 @@ const cm =
             matchBrackets: true,
             autoCloseBrackets: true,
             styleActiveLine: true,
-            lineWrapping: false,
+            lineWrapping: getWordWrapPref(),
             foldGutter: true,
             gutters: [
                 "CodeMirror-linenumbers",
@@ -131,6 +131,15 @@ const cm =
                 },
                 "Cmd-0": function() {
                     resetEditorFontSize();
+                },
+                "Alt-Z": function() {
+                    toggleWordWrap();
+                },
+                "Ctrl-Space": function() {
+                    triggerAutocomplete();
+                },
+                "Cmd-Space": function() {
+                    triggerAutocomplete();
                 }
             }
         }
@@ -280,6 +289,112 @@ function resetEditorFontSize() {
     applyEditorFontSize(EDITOR_FONT_SIZE_DEFAULT);
 }
 applyEditorFontSize(getEditorFontSize());
+/* =====================================================
+   WORD WRAP
+   Persisted per browser (not per file - matches how most
+   editors treat it as a global editing preference).
+===================================================== */
+const WORD_WRAP_KEY = "editorWordWrap";
+function getWordWrapPref() {
+    return localStorage.getItem(WORD_WRAP_KEY) === "1";
+}
+function setWordWrap(enabled) {
+    localStorage.setItem(WORD_WRAP_KEY, enabled ? "1" : "0");
+    cm.setOption("lineWrapping", enabled);
+    cm.refresh();
+}
+function toggleWordWrap() {
+    setWordWrap(!cm.getOption("lineWrapping"));
+}
+/* =====================================================
+   AUTOCOMPLETE
+   Not a language server - just Python keywords/builtins
+   plus whatever identifiers already appear in the current
+   file, like CodeMirror's stock "anyword" hint but aware
+   of Python vocabulary too. Manual-trigger only (Ctrl/Cmd
+   +Space), never auto-popup, so it doesn't fight with
+   on-screen keyboards on mobile.
+===================================================== */
+const PYTHON_KEYWORDS = [
+    "False", "None", "True", "and", "as", "assert",
+    "async", "await", "break", "class", "continue", "def",
+    "del", "elif", "else", "except", "finally", "for",
+    "from", "global", "if", "import", "in", "is", "lambda",
+    "nonlocal", "not", "or", "pass", "raise", "return",
+    "try", "while", "with", "yield", "match", "case"
+];
+const PYTHON_BUILTINS = [
+    "abs", "all", "any", "ascii", "bin", "bool",
+    "bytearray", "bytes", "callable", "chr", "classmethod",
+    "compile", "complex", "delattr", "dict", "dir", "divmod",
+    "enumerate", "eval", "exec", "filter", "float", "format",
+    "frozenset", "getattr", "globals", "hasattr", "hash",
+    "help", "hex", "id", "input", "int", "isinstance",
+    "issubclass", "iter", "len", "list", "locals", "map",
+    "max", "min", "next", "object", "oct", "open", "ord",
+    "pow", "print", "property", "range", "repr", "reversed",
+    "round", "set", "setattr", "slice", "sorted",
+    "staticmethod", "str", "sum", "super", "tuple", "type",
+    "vars", "zip", "self", "__init__", "__name__", "__main__"
+];
+const PYTHON_HINT_VOCAB = Array.from(
+    new Set([...PYTHON_KEYWORDS, ...PYTHON_BUILTINS])
+).sort();
+function pythonHint(instance) {
+    const cursor = instance.getCursor();
+    const line = instance.getLine(cursor.line);
+    let start = cursor.ch;
+    let end = cursor.ch;
+    const isWordChar = (ch) => /[\w]/.test(ch);
+    while (start > 0 && isWordChar(line.charAt(start - 1))) {
+        start--;
+    }
+    while (end < line.length && isWordChar(line.charAt(end))) {
+        end++;
+    }
+    const word = line.slice(start, cursor.ch);
+    if (!word) {
+        return null;
+    }
+    /*
+     * Pull in identifiers already used elsewhere in the
+     * file too - most of what you'd want to autocomplete
+     * in a small script is your own variable/function
+     * names, not just stdlib builtins.
+     */
+    const bufferWords = new Set();
+    const wordPattern = /[A-Za-z_]\w*/g;
+    for (let i = 0; i < instance.lineCount(); i++) {
+        const text = instance.getLine(i);
+        let match;
+        while ((match = wordPattern.exec(text))) {
+            bufferWords.add(match[0]);
+        }
+    }
+    const candidates = Array.from(
+        new Set([...PYTHON_HINT_VOCAB, ...bufferWords])
+    )
+        .filter(
+            (candidate) =>
+                candidate.startsWith(word) &&
+                candidate !== word
+        )
+        .sort();
+    if (!candidates.length) {
+        return null;
+    }
+    return {
+        list: candidates,
+        from: CodeMirror.Pos(cursor.line, start),
+        to: CodeMirror.Pos(cursor.line, end)
+    };
+}
+function triggerAutocomplete() {
+    cm.showHint({
+        hint: pythonHint,
+        completeSingle: false
+    });
+}
 const output = document.getElementById("output");
 
 /* =====================================================
@@ -3743,6 +3858,18 @@ const COMMAND_PALETTE_ITEMS = [
         icon: "refresh",
         shortcut: "Ctrl+0",
         action: () => resetEditorFontSize()
+    },
+    {
+        label: "Toggle Word Wrap",
+        icon: "code",
+        shortcut: "Alt+Z",
+        action: () => toggleWordWrap()
+    },
+    {
+        label: "Trigger Suggestions",
+        icon: "zap",
+        shortcut: "Ctrl+Space",
+        action: () => triggerAutocomplete()
     },
     {
         label: "Save File",
