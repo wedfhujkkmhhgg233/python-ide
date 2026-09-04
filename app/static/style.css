@@ -1622,26 +1622,3 @@ button,
     font-family: var(--font-mono);
     cursor: pointer;
 }
-/* =====================================================
-   AUTOCOMPLETE POPUP
-   CodeMirror's show-hint addon ships styled for a light
-   page by default; re-skin it to match the dark editor
-   theme instead of a jarring white dropdown.
-===================================================== */
-.CodeMirror-hints {
-    background: var(--bg-inset);
-    border: 1px solid var(--surface);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    font-family: var(--font-mono);
-    font-size: var(--editor-font-size, 15px);
-    color: var(--text);
-    z-index: 500;
-}
-.CodeMirror-hint {
-    color: var(--text);
-    padding: 3px 10px;
-}
-li.CodeMirror-hint-active {
-    background: var(--accent);
-    color: var(--bg-inset);
-}
