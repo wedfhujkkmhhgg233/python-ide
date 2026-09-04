@@ -202,7 +202,7 @@ function smartPythonHint(instance, callback) {
                 .charAt(range.from.ch - 1) :
             "";
     const afterDot = charBefore === ".";
-    const finish = (serverCandidates) => {
+    const buildResult = (serverCandidates) => {
         const seen = new Set();
         const list = [];
         serverCandidates.forEach((cand) => {
@@ -241,7 +241,7 @@ function smartPythonHint(instance, callback) {
                 list.push(cand);
             }
         });
-        callback({
+        return {
             list: list.slice(0, 50).map((cand) => ({
                 text: cand.text,
                 type: cand.type,
@@ -252,20 +252,68 @@ function smartPythonHint(instance, callback) {
             })),
             from: range.from,
             to: range.to
-        });
+        };
     };
-    if (isPython && currentFile) {
-        fetchServerCompletions(
-            currentFile,
-            instance.getValue(),
-            instance.getCursor()
-        ).then(finish);
+    if (!isPython || !currentFile) {
+        callback(buildResult([]));
+        return;
     }
-    else {
-        finish([]);
-    }
+    /*
+     * Local suggestions (doc words + keywords/builtins) never
+     * need the network - they should never be held hostage by
+     * a slow or hung request to /complete. Give the server a
+     * short window to contribute Jedi's smarter results; if it
+     * doesn't make it in time, show what we already have rather
+     * than showing nothing at all.
+     */
+    let settled = false;
+    const localOnlyTimer = setTimeout(() => {
+        if (settled) {
+            return;
+        }
+        settled = true;
+        callback(buildResult([]));
+    }, 350);
+    fetchServerCompletions(
+        currentFile,
+        instance.getValue(),
+        instance.getCursor()
+    ).then((serverCandidates) => {
+        if (settled) {
+            // Local-only result already shown - too late to
+            // swap it out from under the user.
+            return;
+        }
+        settled = true;
+        clearTimeout(localOnlyTimer);
+        callback(buildResult(serverCandidates));
+    });
 }
 smartPythonHint.async = true;
+/*
+ * One choke point for every "open the hint popup" call site
+ * (Ctrl/Cmd+Space and the auto-trigger below). If the show-hint
+ * addon failed to load from the CDN for any reason,
+ * CodeMirror.showHint won't exist - rather than the popup just
+ * silently never appearing (which is exactly the "did it work?"
+ * confusion autocomplete is prone to), this logs a clear reason
+ * to the console so it shows up immediately in devtools.
+ */
+function triggerAutocomplete(instance) {
+    if (typeof CodeMirror.showHint !== "function") {
+        console.warn(
+            "Autocomplete unavailable: CodeMirror.showHint " +
+            "is missing - the show-hint addon script likely " +
+            "failed to load."
+        );
+        return;
+    }
+    CodeMirror.showHint(
+        instance,
+        smartPythonHint,
+        { completeSingle: false }
+    );
+}
 const cm =
     CodeMirror.fromTextArea(
         editor,
@@ -351,18 +399,10 @@ const cm =
                     resetEditorFontSize();
                 },
                 "Ctrl-Space": function(instance) {
-                    CodeMirror.showHint(
-                        instance,
-                        smartPythonHint,
-                        { completeSingle: false }
-                    );
+                    triggerAutocomplete(instance);
                 },
                 "Cmd-Space": function(instance) {
-                    CodeMirror.showHint(
-                        instance,
-                        smartPythonHint,
-                        { completeSingle: false }
-                    );
+                    triggerAutocomplete(instance);
                 }
             }
         }
@@ -675,11 +715,7 @@ cm.on("inputRead", function(instance, changeObj) {
     autocompleteTimer = setTimeout(
         () => {
             if (!instance.state.completionActive) {
-                CodeMirror.showHint(
-                    instance,
-                    smartPythonHint,
-                    { completeSingle: false }
-                );
+                triggerAutocomplete(instance);
             }
         },
         typed === "." ? 20 : 200
