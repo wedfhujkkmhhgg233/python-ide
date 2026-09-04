@@ -170,8 +170,7 @@ async function fetchServerCompletions(path, content, pos) {
             completions: data.completions || [],
             debug:
                 "/complete: available=" + data.available +
-                ", " + (data.completions || []).length +
-                " from server"
+                " | " + (data.debugInfo || "no debugInfo")
         };
     }
     catch (err) {
