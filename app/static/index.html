@@ -371,6 +371,15 @@
             <span id="statusPos">Ln 1, Col 1</span>
             <span id="statusIndent">Spaces: 4</span>
             <span id="statusEncoding">UTF-8</span>
+            <button
+                id="statusProblems"
+                class="status-problems ok"
+                onclick="jumpToNextProblem()"
+                title="No problems"
+            >
+                <svg class="icon icon-sm"><use href="#i-alert"></use></svg>
+                <span id="statusProblemsCount">0</span>
+            </button>
         </div>
         <!-- =================
              MOBILE CODING TOOLBAR
