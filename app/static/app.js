@@ -1624,6 +1624,580 @@ function toggleSidebar() {
     }
 }
 /* =====================================================
+   SOURCE CONTROL (git)
+   A structured front-end over the real `git` binary
+   running server-side in the project's own folder - same
+   underlying tool the terminal already exposes, just with
+   buttons instead of typed commands. Two workspace-level
+   extras live here too: connecting a GitHub account (a
+   Personal Access Token) and importing a GitHub repo as a
+   brand-new project.
+===================================================== */
+let sidebarView = "explorer";
+let githubStatusCache = null;
+const sidebarTabExplorerBtn = document.getElementById(
+    "sidebarTabExplorerBtn"
+);
+const sidebarTabGitBtn = document.getElementById("sidebarTabGitBtn");
+const filesEl = document.getElementById("files");
+const sourceControlEl = document.getElementById("sourceControl");
+const gitChangeCountEl = document.getElementById("gitChangeCount");
+const scNotRepoEl = document.getElementById("scNotRepo");
+const scGithubBarEl = document.getElementById("scGithubBar");
+const scGithubStatusTextEl = document.getElementById(
+    "scGithubStatusText"
+);
+const scGithubConnectBtnEl = document.getElementById(
+    "scGithubConnectBtn"
+);
+const scRepoPanelEl = document.getElementById("scRepoPanel");
+const scBranchNameEl = document.getElementById("scBranchName");
+const scAheadBehindEl = document.getElementById("scAheadBehind");
+const scCommitMessageEl = document.getElementById("scCommitMessage");
+const scCommitBtnEl = document.getElementById("scCommitBtn");
+const scSectionsEl = document.getElementById("scSections");
+function setSidebarView(view) {
+    sidebarView = view;
+    sidebarTabExplorerBtn.classList.toggle(
+        "active", view === "explorer"
+    );
+    sidebarTabGitBtn.classList.toggle("active", view === "git");
+    filesEl.hidden = view !== "explorer";
+    sourceControlEl.hidden = view !== "git";
+    if (view === "git") {
+        refreshGitPanel();
+    }
+}
+/*
+ * Cheap version: just keeps the little badge on the Source
+ * Control tab current, without touching the (possibly hidden)
+ * panel contents. Called after anything that could change the
+ * working tree - saving a file, switching projects, etc. - so
+ * the badge is trustworthy even if you never open the panel.
+ */
+async function refreshGitBadge() {
+    if (!currentProject) {
+        return;
+    }
+    try {
+        const status = await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/status`
+        );
+        applyGitBadge(status);
+        if (sidebarView === "git") {
+            renderGitPanel(status);
+        }
+    }
+    catch {
+        // Non-critical - the badge just stays as it was.
+    }
+}
+function applyGitBadge(status) {
+    if (!status || !status.is_repo) {
+        gitChangeCountEl.hidden = true;
+        return;
+    }
+    const count =
+        status.staged.length +
+        status.unstaged.length +
+        status.untracked.length;
+    if (count === 0) {
+        gitChangeCountEl.hidden = true;
+    }
+    else {
+        gitChangeCountEl.hidden = false;
+        gitChangeCountEl.textContent = String(count);
+    }
+}
+async function refreshGitPanel() {
+    if (!currentProject) {
+        return;
+    }
+    try {
+        const status = await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/status`
+        );
+        applyGitBadge(status);
+        renderGitPanel(status);
+    }
+    catch (error) {
+        scNotRepoEl.hidden = true;
+        scRepoPanelEl.hidden = true;
+        scGithubBarEl.hidden = true;
+        output.textContent =
+            "Could not load git status:\n" + error.message;
+    }
+    refreshGithubBar();
+}
+async function refreshGithubBar() {
+    if (githubStatusCache === null) {
+        try {
+            githubStatusCache = await api("/api/github/status");
+        }
+        catch {
+            githubStatusCache = { connected: false };
+        }
+    }
+    scGithubBarEl.hidden = false;
+    if (githubStatusCache.connected) {
+        scGithubStatusTextEl.textContent =
+            "Connected as " + githubStatusCache.username;
+        scGithubConnectBtnEl.textContent = "Disconnect";
+        scGithubConnectBtnEl.onclick = disconnectGithub;
+    }
+    else {
+        scGithubStatusTextEl.textContent = "GitHub not connected";
+        scGithubConnectBtnEl.textContent = "Connect";
+        scGithubConnectBtnEl.onclick = connectGithub;
+    }
+}
+function renderGitPanel(status) {
+    if (!status.is_repo) {
+        scNotRepoEl.hidden = false;
+        scRepoPanelEl.hidden = true;
+        return;
+    }
+    scNotRepoEl.hidden = true;
+    scRepoPanelEl.hidden = false;
+    scBranchNameEl.textContent = status.branch || "(no branch)";
+    const parts = [];
+    if (status.ahead) {
+        parts.push("↑" + status.ahead);
+    }
+    if (status.behind) {
+        parts.push("↓" + status.behind);
+    }
+    scAheadBehindEl.textContent = parts.join(" ");
+    scSectionsEl.innerHTML = "";
+    scSectionsEl.appendChild(
+        buildScGroup(
+            "Staged Changes", status.staged, "staged",
+            status.staged.length > 0 ?
+                { label: "Unstage All", action: () => gitUnstageAll() } :
+                null
+        )
+    );
+    scSectionsEl.appendChild(
+        buildScGroup(
+            "Changes", status.unstaged, "unstaged", null
+        )
+    );
+    scSectionsEl.appendChild(
+        buildScGroup(
+            "Untracked", status.untracked, "untracked",
+            status.untracked.length > 0 ?
+                { label: "Stage All", action: () => gitStageAll() } :
+                null
+        )
+    );
+}
+function buildScGroup(title, items, kind, headerAction) {
+    const group = document.createElement("div");
+    group.className = "sc-group";
+    if (items.length === 0) {
+        return group;
+    }
+    const header = document.createElement("div");
+    header.className = "sc-group-header";
+    const titleSpan = document.createElement("span");
+    titleSpan.textContent = title;
+    header.appendChild(titleSpan);
+    const countSpan = document.createElement("span");
+    countSpan.className = "sc-group-count";
+    countSpan.textContent = String(items.length);
+    header.appendChild(countSpan);
+    if (headerAction) {
+        const actionBtn = document.createElement("button");
+        actionBtn.type = "button";
+        actionBtn.className = "sc-group-action";
+        actionBtn.textContent = headerAction.label;
+        actionBtn.onclick = headerAction.action;
+        header.appendChild(actionBtn);
+    }
+    group.appendChild(header);
+    items.forEach((item) => {
+        group.appendChild(buildScFileRow(item, kind));
+    });
+    return group;
+}
+function buildScFileRow(item, kind) {
+    const row = document.createElement("div");
+    row.className = "sc-file-row";
+    const badge = document.createElement("span");
+    badge.className = "sc-status-badge sc-status-" + item.status;
+    badge.textContent = item.status;
+    row.appendChild(badge);
+    const pathSpan = document.createElement("span");
+    pathSpan.className = "sc-file-path";
+    pathSpan.textContent = item.path;
+    row.appendChild(pathSpan);
+    row.addEventListener(
+        "click",
+        () => openDiffModal(item.path, kind === "staged")
+    );
+    const actionBtn = document.createElement("button");
+    actionBtn.type = "button";
+    actionBtn.className = "sc-row-action";
+    actionBtn.setAttribute("aria-label",
+        kind === "staged" ? "Unstage" : "Stage"
+    );
+    actionBtn.innerHTML =
+        '<svg class="icon"><use href="#i-' +
+        (kind === "staged" ? "minus" : "check") +
+        '"></use></svg>';
+    actionBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (kind === "staged") {
+            gitUnstageFile(item.path);
+        }
+        else {
+            gitStageFile(item.path);
+        }
+    });
+    row.appendChild(actionBtn);
+    return row;
+}
+async function gitInitCurrentProject() {
+    if (!currentProject) {
+        return;
+    }
+    try {
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/init`,
+            { method: "POST" }
+        );
+        await refreshGitPanel();
+    }
+    catch (error) {
+        alert("Could not initialize repository:\n" + error.message);
+    }
+}
+async function gitStageFile(path) {
+    await gitStagePaths([path]);
+}
+async function gitStageAll() {
+    await gitStagePaths(null, true);
+}
+async function gitStagePaths(paths, all) {
+    if (!currentProject) {
+        return;
+    }
+    try {
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/stage`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(
+                    all ? { all: true } : { paths }
+                )
+            }
+        );
+        await refreshGitPanel();
+    }
+    catch (error) {
+        output.textContent = "git add failed:\n" + error.message;
+    }
+}
+async function gitUnstageFile(path) {
+    await gitUnstagePaths([path]);
+}
+async function gitUnstageAll() {
+    await gitUnstagePaths(null, true);
+}
+async function gitUnstagePaths(paths, all) {
+    if (!currentProject) {
+        return;
+    }
+    try {
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/unstage`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(
+                    all ? { all: true } : { paths }
+                )
+            }
+        );
+        await refreshGitPanel();
+    }
+    catch (error) {
+        output.textContent = "git restore failed:\n" + error.message;
+    }
+}
+async function gitCommitCurrentProject() {
+    if (!currentProject) {
+        return;
+    }
+    const message = scCommitMessageEl.value.trim();
+    if (!message) {
+        alert("Write a commit message first.");
+        return;
+    }
+    scCommitBtnEl.disabled = true;
+    try {
+        await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/commit`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message })
+            }
+        );
+        scCommitMessageEl.value = "";
+        output.textContent = "Committed:\n" + message;
+        await refreshGitPanel();
+    }
+    catch (error) {
+        output.textContent = "Commit failed:\n" + error.message;
+    }
+    finally {
+        scCommitBtnEl.disabled = false;
+    }
+}
+async function gitPushCurrentProject() {
+    if (!currentProject) {
+        return;
+    }
+    output.textContent = "Pushing…";
+    try {
+        const data = await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/push`,
+            { method: "POST" }
+        );
+        output.textContent =
+            (data.created_repo ?
+                "Created " + data.repo_url + " and pushed.\n" :
+                "Pushed to " + data.repo_url + ".\n") +
+            data.repo_url;
+        await refreshGitPanel();
+    }
+    catch (error) {
+        output.textContent = "Push failed:\n" + error.message;
+    }
+}
+async function gitPullCurrentProject() {
+    if (!currentProject) {
+        return;
+    }
+    output.textContent = "Pulling…";
+    try {
+        const data = await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/pull`,
+            { method: "POST" }
+        );
+        output.textContent =
+            "Pulled.\n" + (data.summary || "");
+        await loadFiles();
+        await refreshGitPanel();
+        if (currentFile) {
+            const entry = findOpenFile(currentFile);
+            if (entry) {
+                // The file on disk may have just changed under
+                // this open tab - reload it from the server
+                // instead of silently keeping the stale buffer.
+                openFiles = openFiles.filter(
+                    (f) => f.path !== currentFile
+                );
+                const reopenPath = currentFile;
+                currentFile = null;
+                await openFile(reopenPath);
+            }
+        }
+    }
+    catch (error) {
+        output.textContent = "Pull failed:\n" + error.message;
+    }
+}
+async function connectGithub() {
+    const token = prompt(
+        "Paste a GitHub Personal Access Token.\n\n" +
+        "Create one at github.com/settings/tokens " +
+        "(classic, with the 'repo' scope is simplest)."
+    );
+    if (token === null) {
+        return;
+    }
+    const trimmed = token.trim();
+    if (!trimmed) {
+        return;
+    }
+    try {
+        const data = await api(
+            "/api/github/connect",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: trimmed })
+            }
+        );
+        githubStatusCache = data;
+        output.textContent =
+            "Connected to GitHub as " + data.username;
+        refreshGithubBar();
+    }
+    catch (error) {
+        alert("Could not connect to GitHub:\n" + error.message);
+    }
+}
+async function disconnectGithub() {
+    const confirmed = confirm(
+        "Disconnect the GitHub account from this IDE?"
+    );
+    if (!confirmed) {
+        return;
+    }
+    try {
+        await api("/api/github/disconnect", { method: "POST" });
+        githubStatusCache = { connected: false };
+        refreshGithubBar();
+    }
+    catch (error) {
+        alert("Could not disconnect:\n" + error.message);
+    }
+}
+function renderDiffIntoElement(preEl, diffText) {
+    preEl.innerHTML = "";
+    if (!diffText.trim()) {
+        preEl.textContent = "No differences.";
+        return;
+    }
+    diffText.split("\n").forEach((line) => {
+        const span = document.createElement("span");
+        if (line.startsWith("@@")) {
+            span.className = "diff-line-hunk";
+        }
+        else if (
+            line.startsWith("+++") || line.startsWith("---") ||
+            line.startsWith("diff --git") ||
+            line.startsWith("index ") ||
+            line.startsWith("new file") ||
+            line.startsWith("deleted file") ||
+            line.startsWith("similarity index") ||
+            line.startsWith("rename ")
+        ) {
+            span.className = "diff-line-meta";
+        }
+        else if (line.startsWith("+")) {
+            span.className = "diff-line-add";
+        }
+        else if (line.startsWith("-")) {
+            span.className = "diff-line-remove";
+        }
+        span.textContent = line + "\n";
+        preEl.appendChild(span);
+    });
+}
+async function openDiffModal(path, staged) {
+    if (!currentProject) {
+        return;
+    }
+    const modal = document.getElementById("gitDiffModal");
+    const titleEl = document.getElementById("diffModalTitle");
+    const contentEl = document.getElementById("diffModalContent");
+    titleEl.textContent = path;
+    contentEl.textContent = "Loading diff…";
+    modal.classList.add("show");
+    try {
+        const data = await api(
+            `/api/projects/${encodeURIComponent(
+                currentProject
+            )}/git/diff?path=${encodeURIComponent(path)}` +
+            `&staged=${staged ? 1 : 0}`
+        );
+        renderDiffIntoElement(contentEl, data.diff || "");
+    }
+    catch (error) {
+        contentEl.textContent = "Could not load diff:\n" + error.message;
+    }
+}
+function closeDiffModal() {
+    document.getElementById("gitDiffModal").classList.remove("show");
+}
+/*
+ * "Import from GitHub" reuses the same quick-picker overlay as
+ * the Command Palette / Go to File - same widget, a third data
+ * source. If GitHub isn't connected yet, this walks straight
+ * into the connect flow first instead of showing an empty list.
+ */
+async function openGithubImportPicker() {
+    if (!githubStatusCache || !githubStatusCache.connected) {
+        try {
+            githubStatusCache = await api("/api/github/status");
+        }
+        catch {
+            githubStatusCache = { connected: false };
+        }
+    }
+    if (!githubStatusCache.connected) {
+        await connectGithub();
+        if (!githubStatusCache || !githubStatusCache.connected) {
+            return;
+        }
+    }
+    let repos;
+    try {
+        const data = await api("/api/github/repos");
+        repos = data.repos;
+    }
+    catch (error) {
+        alert("Could not load your repositories:\n" + error.message);
+        return;
+    }
+    quickPickerItems = repos.map((repo) => ({
+        label: repo.full_name + (repo.private ? "  (private)" : ""),
+        icon: "github",
+        action: () => importGithubRepo(repo.full_name)
+    }));
+    quickPickerInput.placeholder = "Import which repository…";
+    quickPickerIconUse.setAttribute("href", "#i-github");
+    quickPickerInput.value = "";
+    quickPickerEl.classList.add("show");
+    filterQuickPicker("");
+    setTimeout(() => quickPickerInput.focus(), 0);
+}
+async function importGithubRepo(fullName) {
+    output.textContent = "Importing " + fullName + "…";
+    try {
+        const data = await api(
+            "/api/github/import",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ full_name: fullName })
+            }
+        );
+        await loadProjects();
+        projectSelect.value = data.id;
+        currentProject = data.id;
+        currentFile = null;
+        openFiles = [];
+        renderTabs();
+        await loadFiles();
+        output.textContent = "Imported " + fullName;
+    }
+    catch (error) {
+        output.textContent = "Import failed:\n" + error.message;
+    }
+}
+/* =====================================================
    MOBILE: EDITOR / OUTPUT TABS
 ===================================================== */
 function setMobileView(
@@ -2262,6 +2836,7 @@ async function loadFiles() {
                 )}/files`
             );
         currentProjectFiles = data.files;
+        refreshGitBadge();
         const container = document.getElementById("files");
         if (
             data.tree.length === 0
@@ -4411,6 +4986,46 @@ const COMMAND_PALETTE_ITEMS = [
             deleteCurrentLines(cm);
             cm.focus();
         }
+    },
+    {
+        label: "Source Control: View Changes",
+        icon: "git-branch",
+        action: () => {
+            setSidebarView("git");
+            if (isMobile()) {
+                openSidebar();
+            }
+        }
+    },
+    {
+        label: "Source Control: Initialize Repository",
+        icon: "git-branch",
+        action: () => gitInitCurrentProject()
+    },
+    {
+        label: "Source Control: Stage All Changes",
+        icon: "check",
+        action: () => gitStageAll()
+    },
+    {
+        label: "Source Control: Push",
+        icon: "upload",
+        action: () => gitPushCurrentProject()
+    },
+    {
+        label: "Source Control: Pull",
+        icon: "download",
+        action: () => gitPullCurrentProject()
+    },
+    {
+        label: "GitHub: Connect Account",
+        icon: "github",
+        action: () => connectGithub()
+    },
+    {
+        label: "GitHub: Import Repository as New Project",
+        icon: "github",
+        action: () => openGithubImportPicker()
     }
 ];
 const quickPickerEl = document.getElementById("quickPicker");
