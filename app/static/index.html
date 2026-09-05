@@ -183,6 +183,12 @@
                 <svg class="icon"><use href="#i-plus"></use></svg> New Project
             </button>
             <button
+                onclick="hideMoreToolbarMenu(); importGithubByUrl()"
+                title="Clone a public GitHub repo as a new project"
+            >
+                <svg class="icon"><use href="#i-github"></use></svg> Import from GitHub
+            </button>
+            <button
                 onclick="hideMoreToolbarMenu(); newFile()"
                 title="Create a new file"
             >
