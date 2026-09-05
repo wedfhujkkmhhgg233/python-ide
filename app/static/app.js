@@ -146,7 +146,7 @@ function localCandidates(instance, prefix, afterDot) {
 }
 async function fetchServerCompletions(path, content, pos) {
     if (!currentProject) {
-        return { completions: [], debug: "no currentProject" };
+        return [];
     }
     try {
         const data = await api(
@@ -166,22 +166,12 @@ async function fetchServerCompletions(path, content, pos) {
                 })
             }
         );
-        return {
-            completions: data.completions || [],
-            debug:
-                "/complete: available=" + data.available +
-                " | " + (data.debugInfo || "no debugInfo")
-        };
+        return data.completions || [];
     }
-    catch (err) {
+    catch {
         // No network / server not ready / Jedi not installed
         // - local candidates below still carry the popup.
-        return {
-            completions: [],
-            debug:
-                "/complete FAILED: " +
-                (err && err.message ? err.message : err)
-        };
+        return [];
     }
 }
 function renderHintItem(elt, data, cur) {
@@ -264,135 +254,50 @@ function smartPythonHint(instance, callback) {
             to: range.to
         };
     };
-    const report = (result, debugSuffix) => {
-        showDebugToast(
-            "smartPythonHint -> " +
-            result.list.length + " item(s)" +
-            (debugSuffix ? " | " + debugSuffix : "")
-        );
-        callback(result);
-    };
     if (!isPython || !currentFile) {
-        report(buildResult([]), "not a lintable/open .py file");
+        callback(buildResult([]));
         return;
     }
     /*
      * Local suggestions (doc words + keywords/builtins) never
      * need the network - they should never be held hostage by
      * a slow or hung request to /complete. Give the server a
-     * window to contribute Jedi's smarter results; if it
-     * doesn't make it in time, show what we already have rather
-     * than showing nothing at all. 1200ms rather than something
-     * snappier because Jedi's first real analysis pass on a
-     * free-tier host can genuinely take a while - a too-tight
-     * timeout here just throws away a slow-but-real answer.
+     * window to contribute Jedi's smarter results (its first
+     * real analysis pass can take a bit, especially on a
+     * free-tier host); if it doesn't make it in time, show
+     * what we already have rather than showing nothing at all.
      */
-    const startedAt =
-        (window.performance && performance.now) ?
-            performance.now() :
-            Date.now();
     let settled = false;
     const localOnlyTimer = setTimeout(() => {
         if (settled) {
             return;
         }
         settled = true;
-        report(
-            buildResult([]),
-            "1200ms timeout, no server reply yet"
-        );
-    }, 1200);
+        callback(buildResult([]));
+    }, 1500);
     fetchServerCompletions(
         currentFile,
         instance.getValue(),
         instance.getCursor()
-    ).then((serverResult) => {
-        const elapsed = Math.round(
-            ((window.performance && performance.now) ?
-                performance.now() :
-                Date.now()) - startedAt
-        );
+    ).then((serverCandidates) => {
         if (settled) {
-            // Local-only result already shown, but this still
-            // tells us the real round-trip time even though
-            // it's too late to update the popup with it.
-            showDebugToast(
-                "(late) /complete replied after " +
-                elapsed + "ms: " + serverResult.debug
-            );
+            // Local-only result already shown - too late to
+            // swap it out from under the user.
             return;
         }
         settled = true;
         clearTimeout(localOnlyTimer);
-        report(
-            buildResult(serverResult.completions),
-            elapsed + "ms | " + serverResult.debug
-        );
+        callback(buildResult(serverCandidates));
     });
 }
 smartPythonHint.async = true;
-/*
- * TEMPORARY VISIBLE DEBUGGING (autocomplete rollout)
- * ---------------------------------------------------
- * Android Chrome doesn't have easy on-device DevTools
- * access, so a console.warn() is invisible to whoever's
- * actually testing this on a phone. These render an
- * on-screen banner/toast instead, so "does autocomplete
- * work" can be answered from a screenshot with no computer
- * needed. Safe to delete this whole block once confirmed
- * working - it doesn't affect functionality either way.
- */
-function showDebugBanner(text, color) {
-    let el = document.getElementById("acDebugBanner");
-    if (!el) {
-        el = document.createElement("div");
-        el.id = "acDebugBanner";
-        el.style.cssText =
-            "position:fixed;top:0;left:0;right:0;" +
-            "z-index:99999;padding:6px 10px;" +
-            "font:12px monospace;text-align:center;" +
-            "color:#fff;";
-        document.body.appendChild(el);
-    }
-    el.style.background = color;
-    el.textContent = text;
-}
-function showDebugToast(text) {
-    let el = document.getElementById("acDebugToast");
-    if (!el) {
-        el = document.createElement("div");
-        el.id = "acDebugToast";
-        el.style.cssText =
-            "position:fixed;bottom:8px;left:8px;right:8px;" +
-            "z-index:99999;padding:6px 10px;" +
-            "font:11px monospace;text-align:center;" +
-            "color:#fff;background:#333;border-radius:6px;" +
-            "opacity:0.95;";
-        document.body.appendChild(el);
-    }
-    el.textContent = text;
-}
-if (typeof CodeMirror.showHint !== "function") {
-    showDebugBanner(
-        "AUTOCOMPLETE DEBUG: show-hint.js did NOT load " +
-        "(CodeMirror.showHint is missing)",
-        "#f0665d"
-    );
-}
-else {
-    showDebugBanner(
-        "AUTOCOMPLETE DEBUG: show-hint.js loaded OK",
-        "#3fb950"
-    );
-}
 /*
  * One choke point for every "open the hint popup" call site
  * (Ctrl/Cmd+Space and the auto-trigger below). If the show-hint
  * addon failed to load from the CDN for any reason,
  * CodeMirror.showHint won't exist - rather than the popup just
- * silently never appearing (which is exactly the "did it work?"
- * confusion autocomplete is prone to), this logs a clear reason
- * to the console so it shows up immediately in devtools.
+ * silently never appearing, this logs a clear reason to the
+ * console so it's diagnosable in devtools.
  */
 function triggerAutocomplete(instance) {
     if (typeof CodeMirror.showHint !== "function") {
@@ -401,13 +306,8 @@ function triggerAutocomplete(instance) {
             "is missing - the show-hint addon script likely " +
             "failed to load."
         );
-        showDebugToast(
-            "triggerAutocomplete() called, but " +
-            "CodeMirror.showHint is missing"
-        );
         return;
     }
-    showDebugToast("triggerAutocomplete() called - opening hint");
     CodeMirror.showHint(
         instance,
         smartPythonHint,
