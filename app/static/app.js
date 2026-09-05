@@ -314,6 +314,70 @@ function triggerAutocomplete(instance) {
         { completeSingle: false }
     );
 }
+/* =====================================================
+   KEEP THE HINT POPUP ABOVE THE ON-SCREEN KEYBOARD
+   The interactive-widget=resizes-content viewport meta tag
+   is meant to fix this on its own (the layout viewport should
+   actually shrink to fit above the keyboard), but not every
+   mobile browser build honors it, and there's an inherent
+   timing gap right when the keyboard is still animating in.
+   This is the belt-and-suspenders fix: after the popup exists,
+   explicitly check where the keyboard actually leaves visible
+   space (via the Visual Viewport API, which is authoritative
+   regardless of what the layout viewport does) and pull the
+   popup up / cap its height so it can never render underneath
+   the keyboard, invisible until the keyboard closes.
+===================================================== */
+(function setUpHintKeyboardClamp() {
+    function clampHintsElement(el) {
+        const vv = window.visualViewport;
+        const visibleHeight = vv ? vv.height : window.innerHeight;
+        const visibleTop = vv ? vv.offsetTop : 0;
+        const visibleBottom = visibleTop + visibleHeight;
+        const margin = 8;
+        const rect = el.getBoundingClientRect();
+        const overflow = rect.bottom - visibleBottom;
+        if (overflow > 0) {
+            const currentTop = parseFloat(el.style.top) || rect.top;
+            el.style.top =
+                Math.max(visibleTop + margin, currentTop - overflow - margin) +
+                "px";
+        }
+        const afterRect = el.getBoundingClientRect();
+        const available = visibleBottom - afterRect.top - margin;
+        if (available > 40) {
+            el.style.maxHeight = available + "px";
+        }
+    }
+    function checkForHints() {
+        const el = document.querySelector(".CodeMirror-hints");
+        if (!el || el.dataset.kbClamped) {
+            return;
+        }
+        el.dataset.kbClamped = "1";
+        clampHintsElement(el);
+        /*
+         * The keyboard's own show animation can still be
+         * mid-flight when the popup first appears, so the
+         * visible-area numbers above may be momentarily wrong -
+         * check again shortly after once it's settled.
+         */
+        setTimeout(() => clampHintsElement(el), 80);
+        setTimeout(() => clampHintsElement(el), 250);
+    }
+    new MutationObserver(checkForHints).observe(
+        document.body,
+        { childList: true }
+    );
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", () => {
+            const el = document.querySelector(".CodeMirror-hints");
+            if (el) {
+                clampHintsElement(el);
+            }
+        });
+    }
+})();
 const cm =
     CodeMirror.fromTextArea(
         editor,
@@ -779,6 +843,18 @@ function resetEditorFontSize() {
     applyEditorFontSize(EDITOR_FONT_SIZE_DEFAULT);
 }
 applyEditorFontSize(getEditorFontSize());
+/*
+ * The viewport now actually resizes when the on-screen
+ * keyboard opens/closes (see the interactive-widget meta tag
+ * in index.html - this is also what fixed the autocomplete
+ * popup rendering underneath the keyboard). CodeMirror doesn't
+ * detect its container resizing on its own, so without this it
+ * can misjudge line heights/scroll position right after the
+ * keyboard toggles.
+ */
+window.addEventListener("resize", () => {
+    cm.refresh();
+});
 const output = document.getElementById("output");
 
 /* =====================================================
