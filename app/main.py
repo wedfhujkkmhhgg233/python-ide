@@ -1380,38 +1380,29 @@ def _jedi_completions(
     line: int,
     column: int
 ):
-    """
-    Returns (results, debug_info). debug_info is a short string
-    describing what actually happened - kept separate from the
-    completions themselves so the caller can surface it without
-    it looking like a real suggestion.
-    """
-
     if jedi is None:
-        return [], "jedi is None (import failed at startup)"
-
-    import time as _time
-
-    t0 = _time.monotonic()
+        return []
 
     try:
         script = jedi.Script(code=content, path=filename)
-        script_ms = round((_time.monotonic() - t0) * 1000)
-
-        t1 = _time.monotonic()
         completions = script.complete(line=line, column=column)
-        complete_ms = round((_time.monotonic() - t1) * 1000)
 
     except Exception as exc:
         # Jedi is generally tolerant of broken/incomplete code
         # (that's the whole point, mid-typing), but it's still
-        # third-party static analysis running on arbitrary
-        # user text - never let it 500 the request. Still worth
-        # knowing WHAT broke, though.
-        return [], (
-            "jedi raised " + type(exc).__name__ +
-            ": " + str(exc)[:150]
+        # third-party static analysis running on arbitrary user
+        # text, and it does have real internal bugs on certain
+        # stdlib stubs (seen in practice: a version-mismatch-
+        # sensitive "cannot unpack non-iterable bool object").
+        # Never let that 500 the request - log it server-side
+        # (visible in Render's logs) and just fall back to no
+        # smart completions for that one request; the frontend's
+        # local candidates still carry the popup.
+        print(
+            "[/complete] jedi raised " +
+            type(exc).__name__ + ": " + str(exc)[:200]
         )
+        return []
 
     results = []
 
@@ -1440,11 +1431,7 @@ def _jedi_completions(
         except Exception:
             continue
 
-    return results, (
-        "Script() " + str(script_ms) + "ms, complete() " +
-        str(complete_ms) + "ms, " + str(len(completions)) +
-        " raw jedi completions"
-    )
+    return results
 
 
 @app.post(
@@ -1484,26 +1471,20 @@ async def complete_file(
     if not path.lower().endswith(".py") or jedi is None:
         return {
             "completions": [],
-            "available": jedi is not None,
-            "debugInfo":
-                "skipped - not a .py path" if jedi else
-                "jedi is None (import failed at startup)"
+            "available": jedi is not None
         }
 
     filename = path.rsplit("/", 1)[-1] or "<file>"
 
-    debug_info = "n/a"
-
     try:
         # Jedi's own analysis can occasionally be slow on
-        # large/unusual files - run it off the event loop and
-        # give it a generous ceiling (this is a TEMPORARY wide
-        # timeout for debugging actual latency; tighten once
-        # we know real numbers) so one slow completion request
-        # can't stall the terminal/other requests behind it
-        # forever, but also doesn't get cut off before Jedi
+        # large/unusual files, especially its first real pass on
+        # a free-tier host - run it off the event loop and give
+        # it a reasonably generous ceiling so one slow completion
+        # request can't stall the terminal/other requests behind
+        # it forever, but also doesn't get cut off before Jedi
         # genuinely finishes.
-        results, debug_info = await asyncio.wait_for(
+        results = await asyncio.wait_for(
             asyncio.to_thread(
                 _jedi_completions,
                 content,
@@ -1511,17 +1492,15 @@ async def complete_file(
                 line + 1,
                 col
             ),
-            timeout=10.0
+            timeout=6.0
         )
 
     except asyncio.TimeoutError:
         results = []
-        debug_info = "server-side 10s timeout - jedi truly hung"
 
     return {
         "completions": results,
-        "available": True,
-        "debugInfo": debug_info
+        "available": True
     }
 
 
