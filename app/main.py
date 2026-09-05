@@ -19,6 +19,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 import shutil
 import zipfile
@@ -42,6 +43,19 @@ try:
     import jedi
 except ImportError:  # pragma: no cover
     jedi = None
+
+# Jedi's environment introspection (used for compiled/dynamic
+# parts of stdlib modules - the "AccessPath" machinery) talks to
+# a single shared subprocess for the whole process. It isn't
+# designed to be called from multiple threads at once - two
+# completion requests overlapping (very possible here, since
+# each one runs in its own thread via asyncio.to_thread) can
+# corrupt that shared pipe and produce bizarre, unrelated-
+# looking exceptions (seen in practice: AttributeError on a
+# str, AssertionError on an internal AccessPath object). This
+# lock forces every Jedi call in this process to run one at a
+# time, which is the actual fix rather than a workaround.
+_jedi_lock = threading.Lock()
 
 # Postgres-backed persistence (see the "PERSISTENCE" section below).
 # Optional import so the app still starts locally even if this
@@ -1384,8 +1398,13 @@ def _jedi_completions(
         return []
 
     try:
-        script = jedi.Script(code=content, path=filename)
-        completions = script.complete(line=line, column=column)
+        # See _jedi_lock's comment above - this must be held for
+        # the whole Script()+complete() call, not just complete(),
+        # since Script() is what can trigger the compiled-
+        # subprocess environment setup in the first place.
+        with _jedi_lock:
+            script = jedi.Script(code=content, path=filename)
+            completions = script.complete(line=line, column=column)
 
     except Exception as exc:
         # Jedi is generally tolerant of broken/incomplete code
