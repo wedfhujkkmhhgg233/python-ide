@@ -1664,6 +1664,24 @@ li.CodeMirror-hint-active {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.sc-github-connect-btn {
+    flex-shrink: 0;
+    width: auto;
+    height: auto;
+    padding: 5px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface-hover);
+    color: var(--text-soft);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.sc-github-connect-btn:hover {
+    background: var(--surface-active);
+    color: var(--text);
+}
 .sc-branch-row {
     display: flex;
     align-items: center;
@@ -1684,9 +1702,6 @@ li.CodeMirror-hint-active {
     font-size: 11px;
 }
 .sc-icon-btn {
-    margin-left: auto;
-}
-.sc-icon-btn:first-of-type {
     margin-left: auto;
 }
 .sc-icon-btn + .sc-icon-btn {
@@ -2128,4 +2143,150 @@ li.CodeMirror-hint-active {
     padding: 0 4px;
     font-family: var(--font-mono);
     cursor: pointer;
+}
+
+/* =====================================================
+   SOURCE CONTROL - RESPONSIVE PASS
+   The sidebar is genuinely tight at every breakpoint in
+   this app (as narrow as 190px on tablet, ~230px on
+   small desktop windows), not just on phones - so most
+   of this applies from 1024px down, with an extra bump
+   for touch targets specifically under 700px.
+===================================================== */
+@media (max-width: 1024px) {
+    .sidebar-tab {
+        font-size: 10.5px;
+        padding: 8px 4px;
+        gap: 4px;
+    }
+    .sc-branch-row {
+        flex-wrap: wrap;
+        row-gap: 6px;
+    }
+    .sc-ahead-behind {
+        order: 3;
+        flex-basis: 100%;
+        margin-left: 22px;
+    }
+}
+@media (max-width: 700px) {
+    /*
+     * Bigger tap targets throughout the panel - staging/
+     * unstaging a file while scrolling a changed-files
+     * list is exactly the kind of interaction that
+     * benefits most from this on touch.
+     */
+    .sc-row-action {
+        width: 34px;
+        height: 34px;
+    }
+    .sc-icon-btn {
+        width: 38px;
+        height: 38px;
+    }
+    .sc-file-row {
+        padding: 9px 4px;
+    }
+    .sc-status-badge {
+        width: 18px;
+        height: 18px;
+        font-size: 11px;
+    }
+    .sidebar-tab {
+        min-height: 40px;
+        font-size: 11px;
+        padding: 8px 6px;
+    }
+    .sidebar-tab-badge {
+        min-width: 18px;
+        height: 18px;
+        font-size: 11px;
+    }
+    .sc-primary-btn {
+        min-height: 42px;
+        font-size: 14px;
+    }
+    .sc-commit-input {
+        /* >=16px keeps iOS/Android from zooming in on
+           focus, same reasoning as every other text input
+           in the app. */
+        font-size: 16px;
+        min-height: 52px;
+    }
+    .sc-github-connect-btn {
+        min-height: 34px;
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+    .sc-github-bar {
+        padding: 10px;
+        font-size: 12.5px;
+    }
+    #sourceControl {
+        padding: var(--space-2) var(--space-2)
+            calc(var(--space-3) + env(safe-area-inset-bottom));
+    }
+}
+@media (max-width: 480px) {
+    .sc-branch-row svg {
+        display: none;
+    }
+    .sc-ahead-behind {
+        margin-left: 0;
+    }
+}
+/* =====================================================
+   GIT DIFF MODAL - RESPONSIVE PASS
+   Near-fullscreen on phones instead of a small centered
+   card - there's rarely room to spare for margins once a
+   real diff is on screen, and it needs to be comfortably
+   readable/scrollable with a thumb.
+===================================================== */
+@media (max-width: 700px) {
+    #gitDiffModal {
+        padding: env(safe-area-inset-top) 0 0;
+    }
+    .diff-modal-panel {
+        width: 100%;
+        max-height: 100%;
+        height: 100%;
+        border-radius: 0;
+    }
+    .diff-modal-header {
+        padding: var(--space-3) var(--space-2)
+            var(--space-3) var(--space-3);
+    }
+    .diff-modal-content {
+        font-size: 12px;
+        padding: var(--space-2)
+            calc(var(--space-2) + env(safe-area-inset-right))
+            calc(var(--space-3) + env(safe-area-inset-bottom))
+            var(--space-2);
+        /*
+         * Diff lines can be long (long lines of code, long
+         * paths) - let this scroll horizontally rather than
+         * wrapping, which would make the +/- prefix
+         * alignment unreadable. -webkit-overflow-scrolling
+         * keeps the scroll feeling native or momentum-based
+         * on iOS Safari specifically.
+         */
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+/* =========================
+   LANDSCAPE PHONES
+   Same short-viewport concern
+   as the terminal panel: a
+   modal padded for portrait
+   eats too much of a short
+   landscape screen.
+========================= */
+@media (max-width: 900px) and (max-height: 420px) and (orientation: landscape) {
+    #gitDiffModal {
+        padding: 4px 0 0;
+    }
+    .diff-modal-header {
+        padding: 6px var(--space-2);
+    }
 }
