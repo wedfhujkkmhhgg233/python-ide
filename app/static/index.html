@@ -126,6 +126,12 @@
 <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="20" y1="20" x2="15.5" y2="15.5"/><line x1="7.5" y1="10.5" x2="13.5" y2="10.5"/></symbol>
 <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></symbol>
+<symbol id="i-git-branch" viewBox="0 0 24 24"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="6" cy="18" r="2.2"/><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M18 9a6 6 0 0 1-6 6"/><line x1="18" y1="9" x2="18" y2="15.8"/></symbol>
+<symbol id="i-git-commit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><line x1="1" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="23" y2="12"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M6 10l6 6 6-6"/><path d="M4 19h16"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4 10-10"/></symbol>
+<symbol id="i-minus" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+<symbol id="i-github" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.95 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.03a9.55 9.55 0 0 1 5 0c1.91-1.3 2.75-1.03 2.75-1.03.55 1.37.2 2.39.1 2.64.64.7 1.03 1.6 1.03 2.69 0 3.85-2.35 4.7-4.58 4.94.36.31.68.92.68 1.85v2.75c0 .26.18.58.69.48A10 10 0 0 0 12 2z" fill="currentColor" stroke="none"/></symbol>
 </defs>
 </svg>
 <!-- =========================
@@ -253,8 +259,28 @@
                 <svg class="icon"><use href="#i-plus"></use></svg>
             </button>
         </div>
-        <div class="files-title">
-            Explorer
+        <div class="files-title sidebar-tabs">
+            <button
+                type="button"
+                id="sidebarTabExplorerBtn"
+                class="sidebar-tab active"
+                onclick="setSidebarView('explorer')"
+            >
+                Explorer
+            </button>
+            <button
+                type="button"
+                id="sidebarTabGitBtn"
+                class="sidebar-tab"
+                onclick="setSidebarView('git')"
+            >
+                <span>Source Control</span>
+                <span
+                    id="gitChangeCount"
+                    class="sidebar-tab-badge"
+                    hidden
+                ></span>
+            </button>
         </div>
         <div id="files">
             <div class="explorer-state">
@@ -263,6 +289,77 @@
                     aria-hidden="true"
                 ><svg class="icon icon-lg"><use href="#i-refresh"></use></svg></span>
                 <div class="explorer-state-title">Loading projects…</div>
+            </div>
+        </div>
+        <!-- =====================
+             SOURCE CONTROL PANEL
+        ====================== -->
+        <div id="sourceControl" hidden>
+            <div id="scNotRepo" class="sc-empty-state" hidden>
+                <svg class="icon icon-lg"><use href="#i-git-branch"></use></svg>
+                <div class="explorer-state-title">
+                    Not a git repository
+                </div>
+                <button
+                    type="button"
+                    class="sc-primary-btn"
+                    onclick="gitInitCurrentProject()"
+                >
+                    Initialize Repository
+                </button>
+            </div>
+            <div id="scGithubBar" class="sc-github-bar" hidden>
+                <svg class="icon"><use href="#i-github"></use></svg>
+                <span id="scGithubStatusText">GitHub not connected</span>
+                <button
+                    type="button"
+                    class="small-button"
+                    id="scGithubConnectBtn"
+                    onclick="connectGithub()"
+                >
+                    Connect
+                </button>
+            </div>
+            <div id="scRepoPanel" hidden>
+                <div class="sc-branch-row">
+                    <svg class="icon"><use href="#i-git-branch"></use></svg>
+                    <span id="scBranchName">main</span>
+                    <span id="scAheadBehind" class="sc-ahead-behind"></span>
+                    <button
+                        type="button"
+                        class="small-button sc-icon-btn"
+                        id="scPullBtn"
+                        title="Pull"
+                        onclick="gitPullCurrentProject()"
+                    >
+                        <svg class="icon"><use href="#i-download"></use></svg>
+                    </button>
+                    <button
+                        type="button"
+                        class="small-button sc-icon-btn"
+                        id="scPushBtn"
+                        title="Push"
+                        onclick="gitPushCurrentProject()"
+                    >
+                        <svg class="icon"><use href="#i-upload"></use></svg>
+                    </button>
+                </div>
+                <textarea
+                    id="scCommitMessage"
+                    class="sc-commit-input"
+                    placeholder="Commit message"
+                    rows="2"
+                ></textarea>
+                <button
+                    type="button"
+                    class="sc-primary-btn"
+                    id="scCommitBtn"
+                    onclick="gitCommitCurrentProject()"
+                >
+                    <svg class="icon"><use href="#i-git-commit"></use></svg>
+                    Commit
+                </button>
+                <div id="scSections"></div>
             </div>
         </div>
     </aside>
@@ -656,6 +753,28 @@
         <div id="quickPickerEmpty" class="quick-picker-empty" hidden>
             No matches
         </div>
+    </div>
+</div>
+<!-- =========================
+     GIT DIFF VIEWER
+     Opened by tapping a
+     changed file in the
+     Source Control panel.
+========================= -->
+<div id="gitDiffModal" role="dialog" aria-modal="true" aria-label="Diff viewer">
+    <div class="diff-modal-panel">
+        <div class="diff-modal-header">
+            <span id="diffModalTitle" class="diff-modal-title"></span>
+            <button
+                type="button"
+                class="small-button"
+                onclick="closeDiffModal()"
+                aria-label="Close diff"
+            >
+                <svg class="icon"><use href="#i-x"></use></svg>
+            </button>
+        </div>
+        <pre id="diffModalContent" class="diff-modal-content"></pre>
     </div>
 </div>
 <script src="/static/app.js"></script>
