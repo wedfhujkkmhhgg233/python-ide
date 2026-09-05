@@ -234,6 +234,21 @@ async def db_init_pool():
                 """
             )
 
+            # Small generic key/value store - currently used for
+            # the GitHub Personal Access Token (see the GIT /
+            # GITHUB INTEGRATION section below). Not project-
+            # scoped: one GitHub account is connected per
+            # deployment, same as the rest of this single-user
+            # app.
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                """
+            )
+
             # Upgrading an existing deployment that predates
             # binary file support - add the column if it isn't
             # there yet.
@@ -375,6 +390,56 @@ async def db_save_project(project_id: str, name: str):
             ON CONFLICT (id) DO NOTHING
             """,
             project_id, name
+        )
+
+
+# In-memory fallback for app_settings when there's no database -
+# same "quietly degrade instead of failing" approach as projects:
+# a connected GitHub account just won't survive a restart without
+# a database, but the feature still works for the current session.
+_memory_settings = {}
+
+
+async def db_get_setting(key: str):
+
+    if db_pool is None:
+        return _memory_settings.get(key)
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT value FROM app_settings WHERE key = $1",
+            key
+        )
+        return row["value"] if row else None
+
+
+async def db_set_setting(key: str, value: str):
+
+    if db_pool is None:
+        _memory_settings[key] = value
+        return
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO app_settings (key, value)
+            VALUES ($1, $2)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            key, value
+        )
+
+
+async def db_delete_setting(key: str):
+
+    if db_pool is None:
+        _memory_settings.pop(key, None)
+        return
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM app_settings WHERE key = $1",
+            key
         )
 
 
@@ -678,6 +743,22 @@ async def lifespan(app: FastAPI):
 
     await db_init_pool()
     await db_restore_projects_to_disk()
+
+    # Modern git refuses to operate on a repo it doesn't think the
+    # current user "owns" (a safety check against a class of
+    # multi-user-machine attacks that doesn't apply here - this
+    # container only ever runs this one app). Without this, every
+    # git command below would fail immediately with "detected
+    # dubious ownership in repository".
+    try:
+        subprocess.run(
+            ["git", "config", "--global",
+             "--add", "safe.directory", "*"],
+            timeout=10, check=False,
+            capture_output=True
+        )
+    except Exception:
+        pass
 
     yield
 
@@ -1521,6 +1602,800 @@ async def complete_file(
         "completions": results,
         "available": True
     }
+
+
+# =========================================================
+# GIT / GITHUB INTEGRATION
+# =========================================================
+#
+# Two halves:
+#   - Per-project git operations (status/stage/commit/diff/
+#     push/pull) that shell out to the real `git` binary in
+#     the project's own folder - same idea as the interactive
+#     terminal, just structured instead of freeform.
+#   - GitHub account connection (a Personal Access Token,
+#     stored via the app_settings table above) and the two
+#     things it unlocks: pushing a project to a new/existing
+#     GitHub repo, and importing a GitHub repo as a new local
+#     project.
+#
+# Important limitation, inherited from how this app persists
+# data (see the PERSISTENCE section far above): .git folders
+# are deliberately excluded from the Postgres sync that lets
+# project files survive a restart on a host with no disk
+# persistence (like Render's free tier). That means local
+# commit history / staged state can be lost on a restart even
+# though the files themselves survive - pushing to GitHub is
+# the actual durable backup, not the local repo.
+
+GITHUB_API_BASE = "https://api.github.com"
+
+
+def _scrub_token(text: str, token: str) -> str:
+    """
+    A GitHub token is embedded in the remote URL for push/pull
+    (see git_push below) - git itself can echo that URL back in
+    an error message (e.g. an auth failure), so any text that
+    might contain it gets scrubbed before it's ever sent to the
+    frontend or logged.
+    """
+
+    if not text or not token:
+        return text
+
+    return text.replace(token, "***")
+
+
+async def _run_git(folder: Path, args, timeout: int = 30):
+    """
+    Runs `git <args>` in `folder`. Returns
+    (returncode, stdout, stderr) - never raises for a failed git
+    command (a merge conflict, no upstream, etc. are all normal,
+    expected outcomes the caller decides how to present), only
+    for git genuinely not being runnable at all.
+    """
+
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-c", "safe.directory=*", *args,
+            cwd=str(folder),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
+            )
+
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return 1, "", "git command timed out"
+
+    except FileNotFoundError:
+        return 1, "", "git is not installed on the server"
+
+    return (
+        proc.returncode,
+        stdout.decode("utf-8", "replace"),
+        stderr.decode("utf-8", "replace")
+    )
+
+
+async def _ensure_git_identity(folder: Path):
+    """
+    A commit fails outright with no configured user.name/email.
+    Since this is a single-user app with no concept of "who" is
+    committing beyond "whoever is using this IDE", a generic
+    local (repo-scoped, not global) identity is set the first
+    time it's missing rather than making the user configure
+    this themselves before their first commit works.
+    """
+
+    code, out, _ = await _run_git(folder, ["config", "user.email"])
+    if code != 0 or not out.strip():
+        await _run_git(
+            folder, ["config", "user.email", "ide@local"]
+        )
+
+    code, out, _ = await _run_git(folder, ["config", "user.name"])
+    if code != 0 or not out.strip():
+        await _run_git(
+            folder, ["config", "user.name", "Python IDE"]
+        )
+
+
+def _github_api_sync(
+    token: str, method: str, path: str, body=None
+):
+
+    import urllib.error
+    import urllib.request
+
+    url = GITHUB_API_BASE + path
+    data = (
+        json.dumps(body).encode("utf-8")
+        if body is not None else None
+    )
+
+    request = urllib.request.Request(url, data=data, method=method)
+    request.add_header("Authorization", "Bearer " + token)
+    request.add_header("Accept", "application/vnd.github+json")
+    request.add_header("User-Agent", "python-ide-app")
+    request.add_header("X-GitHub-Api-Version", "2022-11-28")
+
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
+
+    try:
+        with urllib.request.urlopen(request, timeout=15) as resp:
+            raw = resp.read()
+            status = resp.status
+
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        status = exc.code
+
+    except Exception as exc:
+        return 0, {"message": str(exc)}
+
+    try:
+        parsed = json.loads(raw.decode("utf-8")) if raw else {}
+    except Exception:
+        parsed = {"message": raw.decode("utf-8", "replace")[:300]}
+
+    return status, parsed
+
+
+async def _github_api(token: str, method: str, path: str, body=None):
+    return await asyncio.to_thread(
+        _github_api_sync, token, method, path, body
+    )
+
+
+def _authed_clone_url(token: str, https_url: str) -> str:
+    """
+    Turns https://github.com/owner/repo.git into
+    https://<token>@github.com/owner/repo.git, so git can push/
+    pull/clone without an interactive credential prompt (which
+    GIT_TERMINAL_PROMPT=0 would otherwise just fail on outright).
+    """
+
+    if https_url.startswith("https://"):
+        return "https://" + token + "@" + https_url[len("https://"):]
+
+    return https_url
+
+
+# ---------------------------------------------------------
+# GitHub account connection
+# ---------------------------------------------------------
+
+@app.get("/api/github/status")
+async def github_status():
+
+    token = await db_get_setting("github_token")
+
+    if not token:
+        return {"connected": False}
+
+    return {
+        "connected": True,
+        "username": await db_get_setting("github_username")
+    }
+
+
+@app.post("/api/github/connect")
+async def github_connect(request: Request):
+
+    data = await request.json()
+    token = str(data.get("token", "")).strip()
+
+    if not token:
+        return JSONResponse(
+            {"error": "Token cannot be empty"},
+            status_code=400
+        )
+
+    status, user = await _github_api(token, "GET", "/user")
+
+    if status != 200 or not isinstance(user, dict) or "login" not in user:
+        message = (
+            user.get("message")
+            if isinstance(user, dict) else None
+        ) or "Could not verify that token with GitHub."
+        return JSONResponse(
+            {"error": message},
+            status_code=400
+        )
+
+    await db_set_setting("github_token", token)
+    await db_set_setting("github_username", user["login"])
+
+    return {
+        "connected": True,
+        "username": user["login"]
+    }
+
+
+@app.post("/api/github/disconnect")
+async def github_disconnect():
+
+    await db_delete_setting("github_token")
+    await db_delete_setting("github_username")
+
+    return {"connected": False}
+
+
+@app.get("/api/github/repos")
+async def github_repos():
+
+    token = await db_get_setting("github_token")
+
+    if not token:
+        return JSONResponse(
+            {"error": "GitHub isn't connected yet."},
+            status_code=400
+        )
+
+    status, data = await _github_api(
+        token, "GET",
+        "/user/repos?per_page=60&sort=updated&affiliation=owner,collaborator"
+    )
+
+    if status != 200 or not isinstance(data, list):
+        message = (
+            data.get("message")
+            if isinstance(data, dict) else None
+        ) or "Could not load repositories from GitHub."
+        return JSONResponse(
+            {"error": message},
+            status_code=502
+        )
+
+    return {
+        "repos": [
+            {
+                "full_name": repo.get("full_name"),
+                "private": repo.get("private", False),
+                "description": repo.get("description") or "",
+                "updated_at": repo.get("updated_at"),
+                "default_branch": repo.get("default_branch", "main")
+            }
+            for repo in data
+        ]
+    }
+
+
+@app.post("/api/github/import")
+async def github_import(request: Request):
+
+    data = await request.json()
+    full_name = str(data.get("full_name", "")).strip()
+    manual_url = str(data.get("url", "")).strip()
+    requested_name = str(data.get("name", "")).strip()
+
+    if not full_name and not manual_url:
+        return JSONResponse(
+            {"error": "Provide a repo to import."},
+            status_code=400
+        )
+
+    token = await db_get_setting("github_token")
+
+    if full_name:
+        clone_url = f"https://github.com/{full_name}.git"
+        default_name = full_name.split("/")[-1]
+    else:
+        clone_url = manual_url
+        default_name = (
+            manual_url.rstrip("/").rsplit("/", 1)[-1]
+            .removesuffix(".git")
+        ) or "imported-project"
+
+    source_url = (
+        _authed_clone_url(token, clone_url)
+        if token else clone_url
+    )
+
+    name = requested_name or default_name
+    name = "".join(
+        char if char.isalnum() or char in "-_" else "-"
+        for char in name
+    ) or "imported-project"
+
+    project_id = f"{name}-{uuid.uuid4().hex[:8]}"
+    folder = project_path(project_id)
+
+    code, _, stderr = await _run_git(
+        PROJECTS_DIR,
+        ["clone", "--depth", "1", source_url, str(folder)],
+        timeout=120
+    )
+
+    if code != 0:
+        if folder.exists():
+            shutil.rmtree(folder, ignore_errors=True)
+        return JSONResponse(
+            {
+                "error":
+                _scrub_token(
+                    stderr.strip() or "git clone failed.",
+                    token or ""
+                )
+            },
+            status_code=502
+        )
+
+    await db_save_project(project_id, name)
+    await db_full_resync(project_id)
+
+    return {
+        "id": project_id,
+        "name": name
+    }
+
+
+# ---------------------------------------------------------
+# Per-project git operations
+# ---------------------------------------------------------
+
+def _parse_git_status(raw: str):
+
+    lines = raw.split("\n")
+    branch = None
+    ahead = 0
+    behind = 0
+    has_upstream = False
+    staged = []
+    unstaged = []
+    untracked = []
+
+    for line in lines:
+
+        if not line:
+            continue
+
+        if line.startswith("## "):
+            header = line[3:]
+
+            if "..." in header:
+                has_upstream = True
+                branch = header.split("...")[0]
+
+                if "[" in header:
+                    bracket = header[header.index("["):]
+
+                    ahead_match = re.search(r"ahead (\d+)", bracket)
+                    behind_match = re.search(r"behind (\d+)", bracket)
+
+                    if ahead_match:
+                        ahead = int(ahead_match.group(1))
+                    if behind_match:
+                        behind = int(behind_match.group(1))
+
+            elif "(no branch)" in header:
+                branch = "(detached)"
+            else:
+                branch = header.split(" ")[0]
+
+            continue
+
+        if len(line) < 3:
+            continue
+
+        x, y, rest = line[0], line[1], line[3:]
+        path = rest.split(" -> ")[-1]
+
+        if x == "?" and y == "?":
+            untracked.append({"path": path, "status": "U"})
+            continue
+
+        if x != " ":
+            staged.append({"path": path, "status": x})
+
+        if y != " ":
+            unstaged.append({"path": path, "status": y})
+
+    return {
+        "is_repo": True,
+        "branch": branch,
+        "has_upstream": has_upstream,
+        "ahead": ahead,
+        "behind": behind,
+        "staged": staged,
+        "unstaged": unstaged,
+        "untracked": untracked
+    }
+
+
+@app.get("/api/projects/{project_id}/git/status")
+async def git_status(project_id: str):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project"}, status_code=400
+        )
+
+    if not (folder / ".git").is_dir():
+        return {"is_repo": False}
+
+    code, out, stderr = await _run_git(
+        folder, ["status", "--porcelain=v1", "--branch"]
+    )
+
+    if code != 0:
+        return JSONResponse(
+            {"error": stderr.strip() or "git status failed."},
+            status_code=502
+        )
+
+    return _parse_git_status(out)
+
+
+@app.post("/api/projects/{project_id}/git/init")
+async def git_init(project_id: str):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project"}, status_code=400
+        )
+
+    if (folder / ".git").is_dir():
+        return {"initialized": True, "already_existed": True}
+
+    code, _, stderr = await _run_git(folder, ["init", "-b", "main"])
+
+    if code != 0:
+        return JSONResponse(
+            {"error": stderr.strip() or "git init failed."},
+            status_code=502
+        )
+
+    await _ensure_git_identity(folder)
+
+    return {"initialized": True, "already_existed": False}
+
+
+@app.post("/api/projects/{project_id}/git/stage")
+async def git_stage(project_id: str, request: Request):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project"}, status_code=400
+        )
+
+    data = await request.json()
+    paths = data.get("paths") or []
+    stage_all = bool(data.get("all"))
+
+    args = ["add", "-A"] if stage_all else ["add", "--"] + list(paths)
+
+    if not stage_all and not paths:
+        return {"staged": True}
+
+    code, _, stderr = await _run_git(folder, args)
+
+    if code != 0:
+        return JSONResponse(
+            {"error": stderr.strip() or "git add failed."},
+            status_code=502
+        )
+
+    return {"staged": True}
+
+
+@app.post("/api/projects/{project_id}/git/unstage")
+async def git_unstage(project_id: str, request: Request):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project"}, status_code=400
+        )
+
+    data = await request.json()
+    paths = data.get("paths") or []
+    unstage_all = bool(data.get("all"))
+
+    args = (
+        ["reset"] if unstage_all
+        else ["restore", "--staged", "--"] + list(paths)
+    )
+
+    if not unstage_all and not paths:
+        return {"unstaged": True}
+
+    code, _, stderr = await _run_git(folder, args)
+
+    if code != 0:
+        return JSONResponse(
+            {"error": stderr.strip() or "git restore failed."},
+            status_code=502
+        )
+
+    return {"unstaged": True}
+
+
+@app.get("/api/projects/{project_id}/git/diff")
+async def git_diff(project_id: str, path: str, staged: int = 0):
+
+    try:
+        folder = project_path(project_id)
+        relative = safe_relative_path(path)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project or path"}, status_code=400
+        )
+
+    if staged:
+        args = ["diff", "--cached", "--", relative.as_posix()]
+    else:
+        # An untracked file has nothing to diff against in the
+        # index - `git diff --no-index` against /dev/null gives
+        # the same "every line added" view a brand-new file
+        # should show, instead of coming back empty.
+        status_code, status_out, _ = await _run_git(
+            folder, ["status", "--porcelain=v1", "--",
+                     relative.as_posix()]
+        )
+        is_untracked = (
+            status_code == 0 and
+            status_out.startswith("??")
+        )
+
+        if is_untracked:
+            args = [
+                "diff", "--no-index", "--",
+                "/dev/null", relative.as_posix()
+            ]
+        else:
+            args = ["diff", "--", relative.as_posix()]
+
+    code, out, stderr = await _run_git(folder, args)
+
+    # git diff --no-index exits 1 when it finds differences (the
+    # normal case here, not a failure) - only treat >1 as an
+    # actual error.
+    if code > 1:
+        return JSONResponse(
+            {"error": stderr.strip() or "git diff failed."},
+            status_code=502
+        )
+
+    return {"diff": out[:40_000]}
+
+
+@app.post("/api/projects/{project_id}/git/commit")
+async def git_commit(project_id: str, request: Request):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project"}, status_code=400
+        )
+
+    data = await request.json()
+    message = str(data.get("message", "")).strip()
+
+    if not message:
+        return JSONResponse(
+            {"error": "Commit message cannot be empty."},
+            status_code=400
+        )
+
+    await _ensure_git_identity(folder)
+
+    code, out, stderr = await _run_git(
+        folder, ["commit", "-m", message]
+    )
+
+    if code != 0:
+        return JSONResponse(
+            {
+                "error":
+                stderr.strip() or out.strip() or
+                "Nothing to commit."
+            },
+            status_code=400
+        )
+
+    return {"committed": True}
+
+
+@app.get("/api/projects/{project_id}/git/log")
+async def git_log(project_id: str, limit: int = 20):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project"}, status_code=400
+        )
+
+    if not (folder / ".git").is_dir():
+        return {"commits": []}
+
+    code, out, _ = await _run_git(
+        folder,
+        [
+            "log", f"-n{max(1, min(limit, 100))}",
+            "--pretty=format:%h\x1f%an\x1f%ar\x1f%s"
+        ]
+    )
+
+    if code != 0:
+        return {"commits": []}
+
+    commits = []
+
+    for line in out.split("\n"):
+        if not line:
+            continue
+        parts = line.split("\x1f")
+        if len(parts) == 4:
+            commits.append({
+                "hash": parts[0],
+                "author": parts[1],
+                "when": parts[2],
+                "message": parts[3]
+            })
+
+    return {"commits": commits}
+
+
+@app.post("/api/projects/{project_id}/git/push")
+async def git_push(project_id: str):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project"}, status_code=400
+        )
+
+    if not (folder / ".git").is_dir():
+        return JSONResponse(
+            {"error": "This project isn't a git repository yet."},
+            status_code=400
+        )
+
+    token = await db_get_setting("github_token")
+    created_repo = False
+
+    code, remote_url, _ = await _run_git(
+        folder, ["remote", "get-url", "origin"]
+    )
+    has_remote = code == 0 and remote_url.strip()
+
+    if not has_remote:
+
+        if not token:
+            return JSONResponse(
+                {
+                    "error":
+                    "No remote is set up for this project, and "
+                    "no GitHub account is connected to create "
+                    "one automatically."
+                },
+                status_code=400
+            )
+
+        status, repo = await _github_api(
+            token, "POST", "/user/repos",
+            {"name": project_id, "private": True}
+        )
+
+        if status not in (200, 201):
+            message = (
+                repo.get("message")
+                if isinstance(repo, dict) else None
+            ) or "Could not create a GitHub repository."
+            return JSONResponse({"error": message}, status_code=502)
+
+        created_repo = True
+        html_url = repo.get("html_url", "")
+        clone_url = repo.get("clone_url", html_url + ".git")
+
+        code, _, stderr = await _run_git(
+            folder,
+            ["remote", "add", "origin",
+             _authed_clone_url(token, clone_url)]
+        )
+
+        if code != 0:
+            return JSONResponse(
+                {"error": stderr.strip() or "Could not set the remote."},
+                status_code=502
+            )
+
+    _, branch_out, _ = await _run_git(
+        folder, ["branch", "--show-current"]
+    )
+    branch = branch_out.strip() or "main"
+
+    code, out, stderr = await _run_git(
+        folder, ["push", "-u", "origin", branch], timeout=60
+    )
+
+    if code != 0:
+        return JSONResponse(
+            {
+                "error":
+                _scrub_token(
+                    stderr.strip() or out.strip() or "git push failed.",
+                    token or ""
+                )
+            },
+            status_code=502
+        )
+
+    _, remote_url_out, _ = await _run_git(
+        folder, ["remote", "get-url", "origin"]
+    )
+
+    return {
+        "pushed": True,
+        "created_repo": created_repo,
+        "repo_url":
+            _scrub_token(remote_url_out.strip(), token or "")
+            .removesuffix(".git")
+    }
+
+
+@app.post("/api/projects/{project_id}/git/pull")
+async def git_pull(project_id: str):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project"}, status_code=400
+        )
+
+    if not (folder / ".git").is_dir():
+        return JSONResponse(
+            {"error": "This project isn't a git repository yet."},
+            status_code=400
+        )
+
+    token = await db_get_setting("github_token")
+
+    code, out, stderr = await _run_git(
+        folder, ["pull", "--no-rebase"], timeout=60
+    )
+
+    # Pulling changes files on disk directly, bypassing the file-
+    # save API entirely - without this, those changes would only
+    # live on local disk and vanish on the next restart.
+    await db_full_resync(project_id)
+
+    if code != 0:
+        return JSONResponse(
+            {
+                "error":
+                _scrub_token(
+                    stderr.strip() or out.strip() or "git pull failed.",
+                    token or ""
+                )
+            },
+            status_code=502
+        )
+
+    return {"pulled": True, "summary": out.strip()[:500]}
 
 
 # =========================================================
