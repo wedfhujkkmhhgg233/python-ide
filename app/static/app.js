@@ -2137,6 +2137,13 @@ function closeDiffModal() {
  * source. If GitHub isn't connected yet, this walks straight
  * into the connect flow first instead of showing an empty list.
  */
+/*
+ * Browsing your own connected account's repo list - this one
+ * genuinely does need a GitHub connection, since it has to call
+ * GitHub's API on your behalf to list them. For "just import
+ * this public repo I found", see importGithubByUrl() below,
+ * which needs no account connection at all.
+ */
 async function openGithubImportPicker() {
     if (!githubStatusCache || !githubStatusCache.connected) {
         try {
@@ -2173,15 +2180,15 @@ async function openGithubImportPicker() {
     filterQuickPicker("");
     setTimeout(() => quickPickerInput.focus(), 0);
 }
-async function importGithubRepo(fullName) {
-    output.textContent = "Importing " + fullName + "…";
+async function importFromGithub(body, label) {
+    output.textContent = "Importing " + label + "…";
     try {
         const data = await api(
             "/api/github/import",
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ full_name: fullName })
+                body: JSON.stringify(body)
             }
         );
         await loadProjects();
@@ -2191,11 +2198,38 @@ async function importGithubRepo(fullName) {
         openFiles = [];
         renderTabs();
         await loadFiles();
-        output.textContent = "Imported " + fullName;
+        output.textContent = "Imported " + label;
     }
     catch (error) {
         output.textContent = "Import failed:\n" + error.message;
     }
+}
+async function importGithubRepo(fullName) {
+    await importFromGithub({ full_name: fullName }, fullName);
+}
+/*
+ * The main entry point for "Import from GitHub" - a plain
+ * prompt for a repo URL, reachable with a single tap (no
+ * keyboard shortcut, no GitHub account needed). Works for any
+ * public repo out of the box; if a GitHub account happens to be
+ * connected already, the backend will also use its token for
+ * private repos this account has access to.
+ */
+async function importGithubByUrl() {
+    const url = prompt(
+        "Paste a GitHub repo URL to import:\n\n" +
+        "e.g. https://github.com/owner/repo\n\n" +
+        "Works for any public repo. For a private repo, " +
+        "connect a GitHub account first (Source Control tab)."
+    );
+    if (url === null) {
+        return;
+    }
+    const trimmed = url.trim();
+    if (!trimmed) {
+        return;
+    }
+    await importFromGithub({ url: trimmed }, trimmed);
 }
 /* =====================================================
    MOBILE: EDITOR / OUTPUT TABS
@@ -5023,7 +5057,12 @@ const COMMAND_PALETTE_ITEMS = [
         action: () => connectGithub()
     },
     {
-        label: "GitHub: Import Repository as New Project",
+        label: "GitHub: Import by URL (public repo)",
+        icon: "github",
+        action: () => importGithubByUrl()
+    },
+    {
+        label: "GitHub: Import from My Repos",
         icon: "github",
         action: () => openGithubImportPicker()
     }
