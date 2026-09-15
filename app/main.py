@@ -260,6 +260,23 @@ async def db_init_pool():
                 """
             )
 
+            # Packages installed by the user at runtime (e.g.
+            # `pip install requests` typed into the in-browser
+            # terminal). These live in the container's system
+            # site-packages, which - like PROJECTS_DIR - is wiped
+            # on every restart/redeploy on a host with no disk
+            # persistence. Postgres is the source of truth here
+            # too; see the PIP PACKAGE PERSISTENCE section below.
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pip_packages (
+                    name TEXT PRIMARY KEY,
+                    version TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                """
+            )
+
         print("Connected to the database.")
 
     except Exception as error:
@@ -738,11 +755,206 @@ async def db_full_resync(project_id: str):
                 )
 
 
+# =========================================================
+# PIP PACKAGE PERSISTENCE (Postgres)
+# =========================================================
+#
+# Same problem as PROJECTS_DIR above, applied to installed
+# packages instead of project files: the terminal is a real
+# shell, so `pip install <package>` works exactly like it
+# would locally - but it installs into the container's system
+# site-packages, which lives on the same disk that gets wiped
+# on every restart/redeploy. Without this, every package a
+# user installs by hand disappears the next time the service
+# restarts, even though requirements.txt-based packages come
+# back fine (the Dockerfile reinstalls those on every build).
+#
+# The fix mirrors db_full_resync(): periodically diff
+# `pip freeze` against requirements.txt to find packages the
+# user installed that AREN'T already pinned in the image, and
+# keep Postgres's pip_packages table in sync with that diff.
+# On startup, after restoring project files, everything in
+# that table gets pip-installed again before the app is
+# considered ready.
+
+_PKG_NAME_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _normalize_pkg_name(name: str) -> str:
+    # pip/PyPI treat "-", "_" and "." as interchangeable in
+    # distribution names (e.g. opencv-contrib-python-headless
+    # vs opencv_contrib_python_headless) - normalize so the
+    # requirements.txt exclusion list actually matches.
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _load_base_requirement_names() -> set:
+    """
+    Package names already pinned in requirements.txt - these
+    get reinstalled by the Dockerfile on every build/redeploy
+    anyway, so they're excluded from the "user installed this
+    by hand" diff below.
+    """
+
+    names = set()
+
+    try:
+        req_path = Path(__file__).resolve().parent.parent / "requirements.txt"
+        for line in req_path.read_text().splitlines():
+
+            line = line.split("#", 1)[0].strip()
+
+            if not line:
+                continue
+
+            match = _PKG_NAME_RE.match(line)
+
+            if match:
+                names.add(_normalize_pkg_name(match.group(1)))
+
+    except OSError:
+        pass
+
+    # setuptools/wheel/pip itself, plus whatever the base image
+    # ships with - never worth tracking as "user installed".
+    names |= {"pip", "setuptools", "wheel"}
+
+    return names
+
+
+_BASE_REQUIREMENT_NAMES = _load_base_requirement_names()
+
+
+async def _pip_freeze() -> dict:
+    """Returns {normalized_name: (original_name, version)} for
+    everything currently installed in this environment."""
+
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-m", "pip", "list", "--format=json"],
+            capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode != 0:
+            return {}
+
+        packages = json.loads(result.stdout)
+
+        return {
+            _normalize_pkg_name(pkg["name"]): (pkg["name"], pkg["version"])
+            for pkg in packages
+        }
+
+    except Exception:
+        return {}
+
+
+async def db_sync_pip_packages():
+    """
+    Diffs the environment's currently installed packages against
+    requirements.txt and writes the difference (packages the user
+    installed themselves, via the terminal) to Postgres. Called
+    periodically while a terminal is open and once more when it
+    closes - same cadence as db_full_resync().
+    """
+
+    if db_pool is None:
+        return
+
+    installed = await _pip_freeze()
+
+    if not installed:
+        return
+
+    extras = {
+        norm: name_version
+        for norm, name_version in installed.items()
+        if norm not in _BASE_REQUIREMENT_NAMES
+    }
+
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+
+                await conn.execute("DELETE FROM pip_packages")
+
+                for name, version in extras.values():
+                    await conn.execute(
+                        """
+                        INSERT INTO pip_packages (name, version, updated_at)
+                        VALUES ($1, $2, now())
+                        """,
+                        name, version
+                    )
+
+    except Exception as error:
+        print(f"pip package sync failed: {error}")
+
+
+async def db_reinstall_pip_packages():
+    """
+    Reinstalls every package recorded in pip_packages. Runs once
+    at startup, after project files are restored, in the
+    background - a slow or large reinstall must never delay the
+    app coming up and passing Render's health check.
+    """
+
+    if db_pool is None:
+        return
+
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT name, version FROM pip_packages ORDER BY name"
+            )
+
+    except Exception as error:
+        print(f"Could not read saved pip packages: {error}")
+        return
+
+    if not rows:
+        return
+
+    specs = [f"{row['name']}=={row['version']}" for row in rows]
+
+    print(
+        f"Reinstalling {len(specs)} user-installed pip package(s) "
+        f"from a previous session: {', '.join(specs)}"
+    )
+
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir", *specs],
+            capture_output=True, text=True, timeout=600
+        )
+
+        if result.returncode != 0:
+            print(
+                "Some saved pip packages failed to reinstall:\n"
+                f"{result.stderr[-2000:]}"
+            )
+        else:
+            print("Saved pip packages reinstalled successfully.")
+
+    except Exception as error:
+        print(f"Reinstalling saved pip packages failed: {error}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
     await db_init_pool()
     await db_restore_projects_to_disk()
+
+    # Fire-and-forget: reinstalling packages can take a while
+    # (network + compiling wheels), so it must not block the
+    # app from coming up and passing Render's health check. It
+    # runs in the background instead; the terminal and Run
+    # button work immediately, they just won't see a given
+    # reinstalled package until its own install finishes.
+    asyncio.create_task(db_reinstall_pip_packages())
 
     # Modern git refuses to operate on a repo it doesn't think the
     # current user "owns" (a safety check against a class of
@@ -3524,6 +3736,7 @@ async def project_terminal(
         while True:
             await asyncio.sleep(20)
             await db_full_resync(project_id)
+            await db_sync_pip_packages()
 
     resync_task = asyncio.create_task(periodic_resync())
 
@@ -3561,6 +3774,7 @@ async def project_terminal(
         )
 
         await db_full_resync(project_id)
+        await db_sync_pip_packages()
 
         try:
             await websocket.close()
@@ -3650,245 +3864,3 @@ def _load_camera_processor(project_id: str, camera_file: Path):
 
     if cached and cached[0] == mtime:
         return cached[1], cached[2]
-
-    module_name = f"_camera_module_{project_id.replace('-', '_')}"
-
-    try:
-        spec = importlib.util.spec_from_file_location(
-            module_name,
-            str(camera_file)
-        )
-
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        process_fn = getattr(module, "process_frame", None)
-
-        if not callable(process_fn):
-            result = (
-                None,
-                "camera.py must define a "
-                "process_frame(frame) function."
-            )
-
-        else:
-            result = (process_fn, None)
-
-    except Exception as error:
-        result = (None, f"{type(error).__name__}: {error}")
-
-    _camera_module_cache[project_id] = (
-        mtime, result[0], result[1]
-    )
-
-    return result
-
-
-def _draw_camera_error(frame, message: str):
-    """
-    Overlays an error message on the passthrough frame so a
-    bug in camera.py shows up right on the live feed itself,
-    the same way a traceback shows up in the terminal - instead
-    of the stream just silently freezing or dropping.
-    """
-
-    if cv2 is None:
-        return frame
-
-    banner_height = 60
-    overlay = frame.copy()
-
-    cv2.rectangle(
-        overlay,
-        (0, 0),
-        (overlay.shape[1], banner_height),
-        (0, 0, 0),
-        -1
-    )
-
-    frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
-
-    text = message.strip().replace("\n", " ")
-
-    if len(text) > 70:
-        text = text[:67] + "..."
-
-    cv2.putText(
-        frame,
-        "camera.py error:",
-        (10, 20),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (0, 0, 255),
-        1,
-        cv2.LINE_AA
-    )
-
-    cv2.putText(
-        frame,
-        text,
-        (10, 44),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (0, 0, 255),
-        1,
-        cv2.LINE_AA
-    )
-
-    return frame
-
-
-def _process_and_encode_camera_frame(
-    data: bytes, process_fn, load_error
-):
-    """
-    Decode -> run process_frame -> re-encode, all in a single
-    call so it's one dispatch to a worker thread per frame
-    instead of three separate hops between the event loop and
-    the thread pool. That per-frame overhead was the main
-    thing capping throughput well below what the actual
-    OpenCV work and network transfer needed.
-    """
-
-    array = np.frombuffer(data, dtype=np.uint8)
-    frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
-
-    if frame is None:
-        return None
-
-    if load_error:
-        output = _draw_camera_error(frame, load_error)
-
-    else:
-
-        try:
-            result = process_fn(frame)
-
-        except Exception as error:
-            output = _draw_camera_error(
-                frame, f"{type(error).__name__}: {error}"
-            )
-
-        else:
-
-            if result is None or not hasattr(
-                result, "shape"
-            ):
-                output = _draw_camera_error(
-                    frame,
-                    "process_frame must return a NumPy "
-                    "image (it returned "
-                    f"{type(result).__name__})"
-                )
-
-            else:
-                output = result
-
-                if (
-                    hasattr(output, "ndim")
-                    and output.ndim == 2
-                ):
-                    output = cv2.cvtColor(
-                        output, cv2.COLOR_GRAY2BGR
-                    )
-
-    ok, encoded = cv2.imencode(
-        ".jpg",
-        output,
-        [cv2.IMWRITE_JPEG_QUALITY, 50]
-    )
-
-    if not ok:
-        return None
-
-    return encoded.tobytes()
-
-
-@app.websocket(
-    "/ws/projects/{project_id}/camera"
-)
-async def project_camera(
-    websocket: WebSocket,
-    project_id: str
-):
-
-    await websocket.accept()
-
-    try:
-        project = project_path(project_id)
-
-    except ValueError:
-        await websocket.close(code=4000)
-        return
-
-    if not project.is_dir():
-        await websocket.close(code=4004)
-        return
-
-    if cv2 is None or np is None:
-
-        await websocket.send_text(
-            json.dumps({
-                "type": "error",
-                "message":
-                    "opencv-python-headless is not "
-                    "installed on this server."
-            })
-        )
-
-        await websocket.close(code=1011)
-        return
-
-    camera_file = project / "camera.py"
-    loop = asyncio.get_event_loop()
-
-    try:
-        while True:
-
-            try:
-                data = await websocket.receive_bytes()
-
-            except Exception:
-                break
-
-            if not data:
-                continue
-
-            process_fn, load_error = _load_camera_processor(
-                project_id, camera_file
-            )
-
-            try:
-                encoded_bytes = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        _process_and_encode_camera_frame,
-                        data, process_fn, load_error
-                    ),
-                    timeout=2.0
-                )
-
-            except asyncio.TimeoutError:
-                # A single pathologically slow frame just
-                # gets skipped (the feed briefly holds on the
-                # last good frame) rather than blocking the
-                # connection - persistent timeouts mean
-                # process_frame itself is too slow for video.
-                continue
-
-            if not encoded_bytes:
-                continue
-
-            try:
-                await websocket.send_bytes(encoded_bytes)
-
-            except Exception:
-                break
-
-    finally:
-
-        try:
-            await websocket.close()
-
-        except Exception:
-            pass
