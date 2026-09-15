@@ -3864,3 +3864,245 @@ def _load_camera_processor(project_id: str, camera_file: Path):
 
     if cached and cached[0] == mtime:
         return cached[1], cached[2]
+
+    module_name = f"_camera_module_{project_id.replace('-', '_')}"
+
+    try:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            str(camera_file)
+        )
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        process_fn = getattr(module, "process_frame", None)
+
+        if not callable(process_fn):
+            result = (
+                None,
+                "camera.py must define a "
+                "process_frame(frame) function."
+            )
+
+        else:
+            result = (process_fn, None)
+
+    except Exception as error:
+        result = (None, f"{type(error).__name__}: {error}")
+
+    _camera_module_cache[project_id] = (
+        mtime, result[0], result[1]
+    )
+
+    return result
+
+
+def _draw_camera_error(frame, message: str):
+    """
+    Overlays an error message on the passthrough frame so a
+    bug in camera.py shows up right on the live feed itself,
+    the same way a traceback shows up in the terminal - instead
+    of the stream just silently freezing or dropping.
+    """
+
+    if cv2 is None:
+        return frame
+
+    banner_height = 60
+    overlay = frame.copy()
+
+    cv2.rectangle(
+        overlay,
+        (0, 0),
+        (overlay.shape[1], banner_height),
+        (0, 0, 0),
+        -1
+    )
+
+    frame = cv2.addWeighted(overlay, 0.75, frame, 0.25, 0)
+
+    text = message.strip().replace("\n", " ")
+
+    if len(text) > 70:
+        text = text[:67] + "..."
+
+    cv2.putText(
+        frame,
+        "camera.py error:",
+        (10, 20),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 0, 255),
+        1,
+        cv2.LINE_AA
+    )
+
+    cv2.putText(
+        frame,
+        text,
+        (10, 44),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 0, 255),
+        1,
+        cv2.LINE_AA
+    )
+
+    return frame
+
+
+def _process_and_encode_camera_frame(
+    data: bytes, process_fn, load_error
+):
+    """
+    Decode -> run process_frame -> re-encode, all in a single
+    call so it's one dispatch to a worker thread per frame
+    instead of three separate hops between the event loop and
+    the thread pool. That per-frame overhead was the main
+    thing capping throughput well below what the actual
+    OpenCV work and network transfer needed.
+    """
+
+    array = np.frombuffer(data, dtype=np.uint8)
+    frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return None
+
+    if load_error:
+        output = _draw_camera_error(frame, load_error)
+
+    else:
+
+        try:
+            result = process_fn(frame)
+
+        except Exception as error:
+            output = _draw_camera_error(
+                frame, f"{type(error).__name__}: {error}"
+            )
+
+        else:
+
+            if result is None or not hasattr(
+                result, "shape"
+            ):
+                output = _draw_camera_error(
+                    frame,
+                    "process_frame must return a NumPy "
+                    "image (it returned "
+                    f"{type(result).__name__})"
+                )
+
+            else:
+                output = result
+
+                if (
+                    hasattr(output, "ndim")
+                    and output.ndim == 2
+                ):
+                    output = cv2.cvtColor(
+                        output, cv2.COLOR_GRAY2BGR
+                    )
+
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        output,
+        [cv2.IMWRITE_JPEG_QUALITY, 50]
+    )
+
+    if not ok:
+        return None
+
+    return encoded.tobytes()
+
+
+@app.websocket(
+    "/ws/projects/{project_id}/camera"
+)
+async def project_camera(
+    websocket: WebSocket,
+    project_id: str
+):
+
+    await websocket.accept()
+
+    try:
+        project = project_path(project_id)
+
+    except ValueError:
+        await websocket.close(code=4000)
+        return
+
+    if not project.is_dir():
+        await websocket.close(code=4004)
+        return
+
+    if cv2 is None or np is None:
+
+        await websocket.send_text(
+            json.dumps({
+                "type": "error",
+                "message":
+                    "opencv-python-headless is not "
+                    "installed on this server."
+            })
+        )
+
+        await websocket.close(code=1011)
+        return
+
+    camera_file = project / "camera.py"
+    loop = asyncio.get_event_loop()
+
+    try:
+        while True:
+
+            try:
+                data = await websocket.receive_bytes()
+
+            except Exception:
+                break
+
+            if not data:
+                continue
+
+            process_fn, load_error = _load_camera_processor(
+                project_id, camera_file
+            )
+
+            try:
+                encoded_bytes = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        _process_and_encode_camera_frame,
+                        data, process_fn, load_error
+                    ),
+                    timeout=2.0
+                )
+
+            except asyncio.TimeoutError:
+                # A single pathologically slow frame just
+                # gets skipped (the feed briefly holds on the
+                # last good frame) rather than blocking the
+                # connection - persistent timeouts mean
+                # process_frame itself is too slow for video.
+                continue
+
+            if not encoded_bytes:
+                continue
+
+            try:
+                await websocket.send_bytes(encoded_bytes)
+
+            except Exception:
+                break
+
+    finally:
+
+        try:
+            await websocket.close()
+
+        except Exception:
+            pass
