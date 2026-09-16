@@ -7,3 +7,4 @@ opencv-contrib-python-headless==4.13.0.92
 numpy
 asyncpg
 python-multipart
+httpx
