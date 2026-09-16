@@ -2,7 +2,7 @@ from fastapi import (
     FastAPI, Request, WebSocket,
     UploadFile, File, Form
 )
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from contextlib import asynccontextmanager
@@ -17,9 +17,12 @@ import re
 import signal
 import struct
 import subprocess
+import socket
 import sys
 import tempfile
 import threading
+import time
+from collections import deque
 import uuid
 import shutil
 import zipfile
@@ -87,6 +90,15 @@ try:
 except ImportError:  # pragma: no cover
     cv2 = None
     np = None
+
+# Used to reverse-proxy requests to a project's own running
+# server (see the PROJECT SERVERS section below). Optional
+# import so the rest of the app still starts (with that one
+# feature disabled) if it hasn't been installed yet.
+try:
+    import httpx
+except ImportError:  # pragma: no cover
+    httpx = None
 
 
 # =========================================================
@@ -257,6 +269,27 @@ async def db_init_pool():
                 ALTER TABLE project_files
                 ADD COLUMN IF NOT EXISTS is_binary
                     BOOLEAN NOT NULL DEFAULT false;
+                """
+            )
+
+            # Which project servers (see PROJECT SERVERS below)
+            # should be running. This is desired *state*, not a
+            # live process table - a PID from a previous container
+            # is meaningless after a restart, so only project_id/
+            # entry_file/status are persisted. On startup, every
+            # row with status='running' gets relaunched.
+            # ON DELETE CASCADE means deleting a project also
+            # drops its server record automatically - same as
+            # project_files/project_folders above.
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS project_servers (
+                    project_id TEXT PRIMARY KEY REFERENCES
+                        projects(id) ON DELETE CASCADE,
+                    entry_file TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
                 """
             )
 
@@ -942,19 +975,405 @@ async def db_reinstall_pip_packages():
         print(f"Reinstalling saved pip packages failed: {error}")
 
 
+# =========================================================
+# PROJECT SERVERS (long-running "run as a server", start/stop,
+# survives an app restart, reachable at a dedicated URL)
+# =========================================================
+#
+# This is different from the Run button (which runs a script
+# once, captures its output, and kills it after a few seconds
+# or when it finishes). A "project server" is a process meant
+# to keep running indefinitely - a Flask/FastAPI app, a bot, a
+# long poll loop - started explicitly and left running until
+# it's stopped.
+#
+# Three things this needs to actually deliver "stays running
+# even if the main app restarts":
+#
+# 1. Postgres remembers *which* projects should be running
+#    (project_servers table above) - not the OS process itself,
+#    since a PID from before a restart is meaningless in a new
+#    container. On startup, db_resume_project_servers() replays
+#    that desired state by relaunching each one.
+# 2. A real child process (asyncio subprocess), tracked in
+#    _running_servers, bound to an *internal* port on
+#    127.0.0.1 chosen from _SERVER_PORT_RANGE. This is never
+#    exposed to the internet directly - Render only forwards
+#    one external port, the one this app itself listens on.
+# 3. A dedicated URL per project - /run/{project_id}/... -
+#    implemented as a reverse proxy (proxy_to_project_server
+#    below) that forwards to whichever internal port that
+#    project is currently bound to. The URL a user bookmarks
+#    stays the same across restarts even though the internal
+#    port behind it may change.
+#
+# IMPORTANT for whatever the user runs as a project server: it
+# must read the PORT environment variable and bind to it (e.g.
+# Flask: app.run(host="0.0.0.0", port=int(os.environ["PORT"])).
+# A hardcoded port won't be reachable through /run/{project_id}/.
+#
+# Known limitations:
+# - Plain HTTP request/response only - no WebSocket proxying yet.
+# - Path-based, not a real separate origin: if the project's own
+#   HTML/JS references absolute paths like "/static/app.css", the
+#   browser requests that from this app's own root, not from
+#   /run/{project_id}/static/app.css, and 404s. Frameworks that
+#   only use paths relative to the page they're rendering (most
+#   simple Flask/FastAPI apps) work fine as-is.
+
+_SERVER_PORT_RANGE = range(20000, 20100)
+
+# project_id -> {process, port, entry_file, log (deque),
+#                started_at, watcher (asyncio.Task)}
+_running_servers = {}
+
+# Guards start/stop so two overlapping requests for the same
+# project (e.g. a double-tapped Start button) can't both spawn
+# a process or race on the same in-memory entry.
+_server_locks = {}
+
+_http_client = None  # httpx.AsyncClient, set during lifespan
+
+
+class ProjectServerError(Exception):
+    """Raised for any expected/user-facing project-server
+    failure (bad entry file, no free port, etc). Endpoints
+    catch this and turn it into a 400 with the message as-is -
+    unexpected exceptions still propagate as 500s."""
+
+
+def _server_lock(project_id: str) -> asyncio.Lock:
+    lock = _server_locks.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _server_locks[project_id] = lock
+    return lock
+
+
+def _port_is_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def _allocate_server_port() -> int:
+    taken = {
+        entry["port"]
+        for entry in _running_servers.values()
+    }
+    for port in _SERVER_PORT_RANGE:
+        if port not in taken and _port_is_free(port):
+            return port
+    raise ProjectServerError(
+        "No free internal port available right now - try "
+        "stopping another running project server first."
+    )
+
+
+def _validate_entry_file(folder: Path, entry_file: str) -> Path:
+
+    entry_file = (entry_file or "main.py").strip()
+
+    try:
+        relative = safe_relative_path(entry_file)
+    except ValueError:
+        raise ProjectServerError(
+            f"'{entry_file}' isn't a valid file path."
+        )
+
+    full_path = (folder / relative).resolve()
+
+    try:
+        full_path.relative_to(folder.resolve())
+    except ValueError:
+        raise ProjectServerError(
+            f"'{entry_file}' isn't a valid file path."
+        )
+
+    if not full_path.is_file():
+        raise ProjectServerError(
+            f"'{entry_file}' doesn't exist in this project."
+        )
+
+    return relative
+
+
+async def db_save_project_server(
+    project_id: str, entry_file: str, status: str
+):
+    if db_pool is None:
+        return
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO project_servers
+                (project_id, entry_file, status, updated_at)
+            VALUES ($1, $2, $3, now())
+            ON CONFLICT (project_id) DO UPDATE SET
+                entry_file = EXCLUDED.entry_file,
+                status = EXCLUDED.status,
+                updated_at = now()
+            """,
+            project_id, entry_file, status
+        )
+
+
+async def _watch_server_process(project_id: str, proc):
+    """Notices if a project server exits on its own (crash, or
+    the script just finishing) and cleans up state so it isn't
+    shown as "running" forever."""
+
+    await proc.wait()
+
+    entry = _running_servers.get(project_id)
+
+    # Only clean up if this watcher's process is still the
+    # current one for this project - stop_project_server() may
+    # have already popped it (intentional stop) or a new start
+    # may have already replaced it.
+    if entry is not None and entry.get("process") is proc:
+        _running_servers.pop(project_id, None)
+        await db_save_project_server(
+            project_id, entry.get("entry_file", "main.py"), "stopped"
+        )
+
+
+async def _pump_server_log(project_id: str, proc):
+
+    entry = _running_servers.get(project_id)
+    if entry is None:
+        return
+
+    log = entry["log"]
+
+    try:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            log.append(
+                line.decode("utf-8", errors="replace").rstrip("\n")
+            )
+    except Exception:
+        pass
+
+
+async def start_project_server(
+    project_id: str, entry_file: str = "main.py"
+) -> dict:
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        raise ProjectServerError("Invalid project ID")
+
+    if not folder.is_dir():
+        raise ProjectServerError("Project not found")
+
+    async with _server_lock(project_id):
+
+        existing = _running_servers.get(project_id)
+        if existing is not None and existing["process"].returncode is None:
+            # Already running - starting again is a no-op, not
+            # an error (matches how the Start button behaves if
+            # tapped twice).
+            return _server_status_dict(project_id)
+
+        relative_entry = _validate_entry_file(folder, entry_file)
+        port = _allocate_server_port()
+
+        env = {
+            **os.environ,
+            "PORT": str(port),
+            "HOST": "127.0.0.1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(relative_entry),
+                cwd=str(folder),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except Exception as error:
+            raise ProjectServerError(
+                f"Couldn't start '{entry_file}': {error}"
+            )
+
+        _running_servers[project_id] = {
+            "process": proc,
+            "port": port,
+            "entry_file": str(relative_entry),
+            "log": deque(maxlen=400),
+            "started_at": time.time(),
+        }
+
+        asyncio.create_task(_pump_server_log(project_id, proc))
+        asyncio.create_task(_watch_server_process(project_id, proc))
+
+        await db_save_project_server(
+            project_id, str(relative_entry), "running"
+        )
+
+        return _server_status_dict(project_id)
+
+
+async def db_mark_project_server_stopped(project_id: str):
+    """
+    Like db_save_project_server(..., "stopped"), but for when
+    there's no in-memory entry to read entry_file from (e.g.
+    stopping something that's already stopped). Only touches
+    `status` so it can never clobber a previously-saved
+    entry_file with a wrong default.
+    """
+    if db_pool is None:
+        return
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE project_servers SET status = 'stopped', "
+            "updated_at = now() WHERE project_id = $1",
+            project_id
+        )
+
+
+async def stop_project_server(project_id: str) -> dict:
+
+    async with _server_lock(project_id):
+
+        entry = _running_servers.pop(project_id, None)
+
+        if entry is not None:
+            proc = entry["process"]
+            if proc.returncode is None:
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                except Exception:
+                    pass
+
+            await db_save_project_server(
+                project_id, entry["entry_file"], "stopped"
+            )
+        else:
+            await db_mark_project_server_stopped(project_id)
+
+        return {"status": "stopped", "project_id": project_id}
+
+
+def _server_status_dict(project_id: str) -> dict:
+
+    entry = _running_servers.get(project_id)
+
+    if entry is None or entry["process"].returncode is not None:
+        return {
+            "status": "stopped",
+            "project_id": project_id,
+            "url": None,
+            "log": list(entry["log"]) if entry else [],
+        }
+
+    return {
+        "status": "running",
+        "project_id": project_id,
+        "entry_file": entry["entry_file"],
+        "url": f"/run/{project_id}/",
+        "started_at": entry["started_at"],
+        "log": list(entry["log"]),
+    }
+
+
+async def db_resume_project_servers():
+    """
+    Runs once at startup, after project files are restored -
+    relaunches every project server that was running before the
+    last restart. Same "background task, never block startup"
+    reasoning as db_reinstall_pip_packages().
+    """
+
+    if db_pool is None:
+        return
+
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT project_id, entry_file FROM project_servers "
+                "WHERE status = 'running'"
+            )
+    except Exception as error:
+        print(f"Could not read saved project servers: {error}")
+        return
+
+    for row in rows:
+        try:
+            await start_project_server(
+                row["project_id"], row["entry_file"]
+            )
+            print(
+                f"Resumed project server for '{row['project_id']}' "
+                f"({row['entry_file']})."
+            )
+        except Exception as error:
+            print(
+                f"Could not resume project server for "
+                f"'{row['project_id']}': {error}"
+            )
+
+
+_HOP_BY_HOP_HEADERS = {
+    "connection", "keep-alive", "proxy-authenticate",
+    "proxy-authorization", "te", "trailers",
+    "transfer-encoding", "upgrade", "host", "content-length",
+}
+
+
+# proxy_to_project_server (the /run/{project_id}/... route) is
+# registered further down, right after `app = FastAPI(...)` is
+# created - a route decorator needs `app` to already exist.
+
+
+async def _run_post_startup_background_tasks():
+    """
+    Reinstalling saved pip packages, then resuming project
+    servers - in that order, in the background, so a project
+    server that depends on one of those packages doesn't race
+    its own dependency install. Both steps individually already
+    tolerate failure (a bad package or a project that no longer
+    starts just logs and moves on; see each function's own
+    try/except).
+    """
+    await db_reinstall_pip_packages()
+    await db_resume_project_servers()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
+    global _http_client
 
     await db_init_pool()
     await db_restore_projects_to_disk()
 
-    # Fire-and-forget: reinstalling packages can take a while
-    # (network + compiling wheels), so it must not block the
-    # app from coming up and passing Render's health check. It
-    # runs in the background instead; the terminal and Run
-    # button work immediately, they just won't see a given
-    # reinstalled package until its own install finishes.
-    asyncio.create_task(db_reinstall_pip_packages())
+    if httpx is not None:
+        _http_client = httpx.AsyncClient(timeout=30.0)
+
+    # Fire-and-forget: both reinstalling packages and resuming
+    # project servers can take a while, so neither can block the
+    # app from coming up and passing Render's health check. They
+    # run in the background instead; the terminal and Run button
+    # work immediately either way.
+    asyncio.create_task(_run_post_startup_background_tasks())
 
     # Modern git refuses to operate on a repo it doesn't think the
     # current user "owns" (a safety check against a class of
@@ -977,8 +1396,92 @@ async def lifespan(app: FastAPI):
     if db_pool is not None:
         await db_pool.close()
 
+    if _http_client is not None:
+        await _http_client.aclose()
+
 
 app = FastAPI(title="Python IDE", lifespan=lifespan)
+
+
+@app.api_route(
+    "/run/{project_id}/{sub_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+)
+async def proxy_to_project_server(
+    project_id: str, sub_path: str, request: Request
+):
+    """
+    Reverse proxy: forwards a request to whatever internal port
+    the given project's server currently owns (if any). This is
+    what gives each running project a stable, dedicated URL that
+    doesn't change even though the internal port behind it can -
+    see the PROJECT SERVERS section above for the full picture.
+    """
+
+    entry = _running_servers.get(project_id)
+
+    if entry is None or entry["process"].returncode is not None:
+        return JSONResponse(
+            {
+                "error":
+                    f"No server is currently running for "
+                    f"'{project_id}'. Start it from the Server "
+                    f"tab first."
+            },
+            status_code=404
+        )
+
+    if httpx is None or _http_client is None:
+        return JSONResponse(
+            {
+                "error":
+                    "The proxy feature isn't available "
+                    "(httpx isn't installed)."
+            },
+            status_code=501
+        )
+
+    port = entry["port"]
+    target_url = f"http://127.0.0.1:{port}/{sub_path}"
+
+    forward_headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in _HOP_BY_HOP_HEADERS
+    }
+
+    body = await request.body()
+
+    try:
+        upstream = await _http_client.request(
+            request.method,
+            target_url,
+            params=request.query_params,
+            headers=forward_headers,
+            content=body,
+        )
+    except httpx.RequestError as error:
+        return JSONResponse(
+            {
+                "error":
+                    f"Project server for '{project_id}' isn't "
+                    f"responding yet (it may still be starting "
+                    f"up): {error}"
+            },
+            status_code=502
+        )
+
+    response_headers = {
+        key: value
+        for key, value in upstream.headers.items()
+        if key.lower() not in _HOP_BY_HOP_HEADERS
+    }
+
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+    )
 
 # Resolve paths relative to this file instead of the process's current
 # working directory. Previously these were relative strings like
@@ -1276,6 +1779,88 @@ async def create_project(
         "id": project_id,
         "name": project_id
     }
+
+
+# =========================================================
+# DELETE PROJECT
+# =========================================================
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+
+    try:
+        folder = project_path(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": "Invalid project ID"}, status_code=400
+        )
+
+    if not folder.is_dir():
+        return JSONResponse(
+            {"error": "Project not found"}, status_code=404
+        )
+
+    # Stop its server first, if one is running - nothing should
+    # keep writing to (or holding a port open for) a project
+    # that's about to be deleted.
+    await stop_project_server(project_id)
+    _server_locks.pop(project_id, None)
+
+    try:
+        shutil.rmtree(folder)
+    except OSError as error:
+        return JSONResponse(
+            {"error": f"Could not delete project files: {error}"},
+            status_code=500
+        )
+
+    if db_pool is not None:
+        try:
+            async with db_pool.acquire() as conn:
+                # ON DELETE CASCADE on project_files,
+                # project_folders and project_servers takes
+                # care of the rest.
+                await conn.execute(
+                    "DELETE FROM projects WHERE id = $1", project_id
+                )
+        except Exception as error:
+            print(
+                f"Could not delete project '{project_id}' from "
+                f"the database: {error}"
+            )
+
+    return {"deleted": project_id}
+
+
+# =========================================================
+# PROJECT SERVER (start / stop / status) - see the PROJECT
+# SERVERS section far above for the full design.
+# =========================================================
+
+@app.post("/api/projects/{project_id}/server/start")
+async def api_start_project_server(project_id: str, request: Request):
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    entry_file = str(data.get("entry_file") or "main.py").strip()
+
+    try:
+        return await start_project_server(project_id, entry_file)
+    except ProjectServerError as error:
+        return JSONResponse({"error": str(error)}, status_code=400)
+
+
+@app.post("/api/projects/{project_id}/server/stop")
+async def api_stop_project_server(project_id: str):
+    return await stop_project_server(project_id)
+
+
+@app.get("/api/projects/{project_id}/server")
+async def api_get_project_server(project_id: str):
+    return _server_status_dict(project_id)
 
 
 # =========================================================
