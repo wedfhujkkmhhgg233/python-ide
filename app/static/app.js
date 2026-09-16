@@ -891,6 +891,16 @@ const cameraPlaceholder = document.getElementById(
     "cameraPlaceholder"
 );
 const cameraFpsEl = document.getElementById("cameraFps");
+const serverTabBtn = document.getElementById("serverTabBtn");
+const serverPane = document.getElementById("serverPane");
+const serverToolbar = document.getElementById("serverToolbar");
+const serverStatusDot = document.getElementById("serverStatusDot");
+const serverEntryFileInput = document.getElementById(
+    "serverEntryFileInput"
+);
+const serverStartBtn = document.getElementById("serverStartBtn");
+const serverOpenLink = document.getElementById("serverOpenLink");
+const serverLog = document.getElementById("serverLog");
 let bottomTab = "output";
 let term = null;
 let fitAddon = null;
@@ -1468,6 +1478,10 @@ function setBottomTab(tab) {
         "active",
         tab === "camera"
     );
+    serverTabBtn.classList.toggle(
+        "active",
+        tab === "server"
+    );
     outputPane.classList.toggle(
         "active",
         tab === "output"
@@ -1480,6 +1494,10 @@ function setBottomTab(tab) {
         "active",
         tab === "camera"
     );
+    serverPane.classList.toggle(
+        "active",
+        tab === "server"
+    );
     terminalToolbar.classList.toggle(
         "show",
         tab === "terminal"
@@ -1487,6 +1505,10 @@ function setBottomTab(tab) {
     cameraToolbar.classList.toggle(
         "show",
         tab === "camera"
+    );
+    serverToolbar.classList.toggle(
+        "show",
+        tab === "server"
     );
     if (tab === "terminal") {
         ensureTerminalConnected();
@@ -1501,6 +1523,13 @@ function setBottomTab(tab) {
                 term.focus();
             }
         });
+    }
+    if (tab === "server") {
+        refreshProjectServerStatus();
+    }
+    stopServerStatusPolling();
+    if (tab === "server") {
+        startServerStatusPolling();
     }
 }
 function shellQuote(value) {
@@ -2650,6 +2679,163 @@ function renderExplorerState(container, options) {
     container.appendChild(wrap);
 }
 /* =====================================================
+   PROJECT SERVER (start / stop / status / log)
+   Runs an entry file as a long-lived server, separate from
+   the one-shot Run button. Persists across an app restart
+   and gets a dedicated link at /run/{project_id}/.
+===================================================== */
+let serverStatusPollTimer = null;
+let serverActionInFlight = false;
+function setServerStatus(status, title) {
+    serverStatusDot.className =
+        "term-status-dot" +
+        (status !== "stopped" ? " " + status : "");
+    serverStatusDot.title = title || status;
+}
+function startServerStatusPolling() {
+    if (serverStatusPollTimer) {
+        return;
+    }
+    serverStatusPollTimer = setInterval(
+        refreshProjectServerStatus,
+        4000
+    );
+}
+function stopServerStatusPolling() {
+    if (serverStatusPollTimer) {
+        clearInterval(serverStatusPollTimer);
+        serverStatusPollTimer = null;
+    }
+}
+function renderServerStatus(data) {
+    if (data.status === "running") {
+        setServerStatus("connected", "Running");
+        serverStartBtn.innerHTML =
+            '<span class="btn-icon"><svg class="icon">' +
+            '<use href="#i-square"></use></svg></span>' +
+            '<span class="btn-label">Stop</span>';
+        serverOpenLink.style.display = "";
+        serverOpenLink.href = data.url;
+        if (data.entry_file) {
+            serverEntryFileInput.value = data.entry_file;
+        }
+    } else {
+        setServerStatus("stopped", "Stopped");
+        serverStartBtn.innerHTML =
+            '<span class="btn-icon"><svg class="icon">' +
+            '<use href="#i-play"></use></svg></span>' +
+            '<span class="btn-label">Start</span>';
+        serverOpenLink.style.display = "none";
+    }
+    if (data.log && data.log.length > 0) {
+        serverLog.textContent = data.log.join("\n");
+        serverLog.scrollTop = serverLog.scrollHeight;
+    } else if (data.status !== "running") {
+        serverLog.textContent = "Not running.";
+    }
+}
+async function refreshProjectServerStatus() {
+    if (!currentProject) {
+        return;
+    }
+    try {
+        const data = await api(
+            "/api/projects/" +
+            encodeURIComponent(currentProject) +
+            "/server"
+        );
+        renderServerStatus(data);
+    } catch (error) {
+        /*
+         * A failed background poll shouldn't interrupt
+         * whatever the user's doing - just leave the last
+         * known state showing until the next poll succeeds.
+         */
+    }
+}
+async function toggleProjectServer() {
+    if (!currentProject) {
+        alert("Open or create a project first.");
+        return;
+    }
+    if (serverActionInFlight) {
+        return;
+    }
+    serverActionInFlight = true;
+    serverStartBtn.disabled = true;
+    const wasRunning =
+        serverStatusDot.classList.contains("connected");
+    try {
+        if (wasRunning) {
+            setServerStatus("connecting", "Stopping...");
+            const data = await api(
+                "/api/projects/" +
+                encodeURIComponent(currentProject) +
+                "/server/stop",
+                { method: "POST" }
+            );
+            renderServerStatus(data);
+        } else {
+            setServerStatus("connecting", "Starting...");
+            const entryFile =
+                serverEntryFileInput.value.trim() || "main.py";
+            const data = await api(
+                "/api/projects/" +
+                encodeURIComponent(currentProject) +
+                "/server/start",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        entry_file: entryFile
+                    })
+                }
+            );
+            renderServerStatus(data);
+        }
+    } catch (error) {
+        setServerStatus("error", error.message);
+        alert(error.message);
+    } finally {
+        serverActionInFlight = false;
+        serverStartBtn.disabled = false;
+    }
+}
+/* =====================================================
+   DELETE PROJECT
+===================================================== */
+async function deleteCurrentProject() {
+    if (!currentProject) {
+        alert("No project selected.");
+        return;
+    }
+    const name = currentProject;
+    const confirmed = confirm(
+        'Delete project "' + name + '"?\n\n' +
+        "This permanently deletes all its files (and stops " +
+        "its server, if running). This can't be undone."
+    );
+    if (!confirmed) {
+        return;
+    }
+    try {
+        await api(
+            "/api/projects/" + encodeURIComponent(name),
+            { method: "DELETE" }
+        );
+    } catch (error) {
+        alert("Couldn't delete project:\n" + error.message);
+        return;
+    }
+    currentProject = null;
+    openFiles = [];
+    clearEditorForNoFile();
+    renderTabs();
+    await loadProjects();
+}
+/* =====================================================
    LOAD PROJECTS
 ===================================================== */
 async function loadProjects() {
@@ -2853,6 +3039,9 @@ async function switchProject() {
     await loadFiles();
     if (bottomTab === "terminal") {
         ensureTerminalConnected();
+    }
+    if (bottomTab === "server") {
+        refreshProjectServerStatus();
     }
 }
 /* =====================================================
