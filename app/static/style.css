@@ -631,11 +631,29 @@ input:focus-visible,
     color: var(--text-muted);
     font-size: 12px;
     font-weight: 600;
+    /*
+     * A toolbar (Server's especially - status dot + entry-file
+     * box + Start + Open + Refresh) can be wider than a narrow
+     * phone screen. Without this, the overflow doesn't wrap -
+     * it just extends past the viewport edge with no scrollbar,
+     * making buttons like Start completely unreachable. This
+     * keeps everything reachable via a horizontal swipe instead,
+     * and costs nothing on screens wide enough that it never
+     * triggers.
+     */
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.terminal-header::-webkit-scrollbar {
+    display: none;
 }
 .term-tabs {
     display: flex;
     align-items: center;
     height: 100%;
+    flex-shrink: 0;
 }
 .term-tab {
     background: transparent;
@@ -667,6 +685,7 @@ input:focus-visible,
     display: none;
     align-items: center;
     gap: var(--space-2);
+    flex-shrink: 0;
 }
 .term-toolbar.show {
     display: flex;
@@ -986,6 +1005,9 @@ input:focus-visible,
     #deleteLineBtn {
         padding: 7px 10px;
         font-size: 13px;
+    }
+    .server-entry-input {
+        width: 70px;
     }
 }
 @media (max-width: 480px) {
