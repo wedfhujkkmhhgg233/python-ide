@@ -264,6 +264,14 @@
             >
                 <svg class="icon"><use href="#i-plus"></use></svg>
             </button>
+            <button
+                class="small-button"
+                onclick="deleteCurrentProject()"
+                title="Delete this project"
+                aria-label="Delete this project"
+            >
+                <svg class="icon"><use href="#i-trash"></use></svg>
+            </button>
         </div>
         <div class="files-title sidebar-tabs">
             <button
@@ -570,6 +578,13 @@
                     >
                         <svg class="icon"><use href="#i-camera"></use></svg> Camera
                     </button>
+                    <button
+                        id="serverTabBtn"
+                        class="term-tab"
+                        onclick="setBottomTab('server')"
+                    >
+                        <svg class="icon"><use href="#i-zap"></use></svg> Server
+                    </button>
                 </div>
                 <div
                     id="terminalToolbar"
@@ -626,6 +641,50 @@
                         <svg class="icon"><use href="#i-refresh"></use></svg> Flip
                     </button>
                 </div>
+                <div
+                    id="serverToolbar"
+                    class="term-toolbar"
+                >
+                    <span
+                        id="serverStatusDot"
+                        class="term-status-dot"
+                        title="Stopped"
+                    ></span>
+                    <input
+                        id="serverEntryFileInput"
+                        type="text"
+                        value="main.py"
+                        placeholder="main.py"
+                        class="server-entry-input"
+                        title="Entry file to run as a server"
+                        aria-label="Entry file to run as a server"
+                    />
+                    <button
+                        class="term-tool-btn"
+                        id="serverStartBtn"
+                        onclick="toggleProjectServer()"
+                    >
+                        <span class="btn-icon"><svg class="icon"><use href="#i-play"></use></svg></span><span class="btn-label">Start</span>
+                    </button>
+                    <a
+                        id="serverOpenLink"
+                        class="term-tool-btn"
+                        href="#"
+                        target="_blank"
+                        rel="noopener"
+                        style="display:none"
+                        title="Open this project's server in a new tab"
+                    >
+                        Open&nbsp;&#8599;
+                    </a>
+                    <button
+                        class="term-tool-btn"
+                        onclick="refreshProjectServerStatus()"
+                        title="Refresh status and log"
+                    >
+                        <svg class="icon"><use href="#i-refresh"></use></svg>
+                    </button>
+                </div>
             </div>
             <div
                 id="outputPane"
@@ -664,6 +723,20 @@
                     </div>
                     <div id="cameraFps"></div>
                 </div>
+            </div>
+            <div
+                id="serverPane"
+                class="term-pane"
+            >
+                <pre id="serverLog">Not running.
+
+Runs an entry file (default main.py) as a long-lived server
+instead of a one-shot script - it keeps running after you hit
+Start, survives this app restarting, and gets its own link.
+
+Your script must read the PORT env var and bind to it, e.g.:
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)</pre>
             </div>
         </section>
     </main>
