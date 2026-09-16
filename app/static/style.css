@@ -676,6 +676,20 @@ input:focus-visible,
     font-size: 11px;
     min-height: 0;
 }
+.server-entry-input {
+    width: 110px;
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-family: var(--font-ui);
+}
+.server-entry-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
 .term-status-dot {
     width: 8px;
     height: 8px;
