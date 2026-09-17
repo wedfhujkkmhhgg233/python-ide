@@ -272,6 +272,33 @@ async def db_init_pool():
                 """
             )
 
+            # Snapshots of a file's *previous* content, taken
+            # right before it gets overwritten (by a save, a
+            # terminal-driven change picked up by db_full_resync,
+            # or a restore itself) - see db_save_file() and
+            # _snapshot_file_version() below. This is what lets a
+            # file be rolled back after an accidental overwrite
+            # or deletion.
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS file_versions (
+                    id SERIAL PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES
+                        projects(id) ON DELETE CASCADE,
+                    path TEXT NOT NULL,
+                    content TEXT,
+                    is_binary BOOLEAN NOT NULL DEFAULT false,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                """
+            )
+            await conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_file_versions_lookup
+                ON file_versions (project_id, path, created_at DESC);
+                """
+            )
+
             # Which project servers (see PROJECT SERVERS below)
             # should be running. This is desired *state*, not a
             # live process table - a PID from a previous container
@@ -493,6 +520,43 @@ async def db_delete_setting(key: str):
         )
 
 
+_MAX_FILE_VERSIONS_PER_FILE = 25
+
+
+async def _snapshot_file_version(
+    conn, project_id: str, path: str, content, is_binary: bool
+):
+    """
+    Records what a file looked like right before it's about to
+    be overwritten or deleted. `conn` is an already-acquired
+    connection (and may already be inside a transaction) so this
+    never opens its own. Keeps only the most recent
+    _MAX_FILE_VERSIONS_PER_FILE snapshots per (project, path) so
+    history can't grow without bound.
+    """
+
+    await conn.execute(
+        """
+        INSERT INTO file_versions (project_id, path, content, is_binary)
+        VALUES ($1, $2, $3, $4)
+        """,
+        project_id, path, content, is_binary
+    )
+
+    await conn.execute(
+        """
+        DELETE FROM file_versions
+        WHERE id IN (
+            SELECT id FROM file_versions
+            WHERE project_id = $1 AND path = $2
+            ORDER BY created_at DESC
+            OFFSET $3
+        )
+        """,
+        project_id, path, _MAX_FILE_VERSIONS_PER_FILE
+    )
+
+
 async def db_save_file(
     project_id: str,
     path: str,
@@ -508,6 +572,21 @@ async def db_save_file(
         return
 
     async with db_pool.acquire() as conn:
+
+        old_row = await conn.fetchrow(
+            "SELECT content, is_binary FROM project_files "
+            "WHERE project_id = $1 AND path = $2",
+            project_id, path
+        )
+
+        if old_row is not None and (
+            old_row["content"] != content
+            or old_row["is_binary"] != is_binary
+        ):
+            await _snapshot_file_version(
+                conn, project_id, path,
+                old_row["content"], old_row["is_binary"]
+            )
 
         await conn.execute(
             """
@@ -727,10 +806,15 @@ async def db_full_resync(project_id: str):
     async with db_pool.acquire() as conn:
 
         db_rows = await conn.fetch(
-            "SELECT path FROM project_files WHERE project_id = $1",
+            "SELECT path, content, is_binary FROM project_files "
+            "WHERE project_id = $1",
             project_id
         )
         db_paths = {row["path"] for row in db_rows}
+        db_content_by_path = {
+            row["path"]: (row["content"], row["is_binary"])
+            for row in db_rows
+        }
 
         db_folder_rows = await conn.fetch(
             "SELECT path FROM project_folders WHERE project_id = $1",
@@ -745,6 +829,17 @@ async def db_full_resync(project_id: str):
 
             for path in files_to_delete:
 
+                # A file that vanished on disk (e.g. `rm` in the
+                # terminal) - snapshot its last known content
+                # before dropping the row, so it's recoverable
+                # from File History even though the row itself
+                # is gone.
+                old = db_content_by_path.get(path)
+                if old is not None:
+                    await _snapshot_file_version(
+                        conn, project_id, path, old[0], old[1]
+                    )
+
                 await conn.execute(
                     "DELETE FROM project_files "
                     "WHERE project_id = $1 AND path = $2",
@@ -752,6 +847,14 @@ async def db_full_resync(project_id: str):
                 )
 
             for path, (content, is_binary) in disk_files.items():
+
+                old = db_content_by_path.get(path)
+                if old is not None and (
+                    old[0] != content or old[1] != is_binary
+                ):
+                    await _snapshot_file_version(
+                        conn, project_id, path, old[0], old[1]
+                    )
 
                 await conn.execute(
                     """
@@ -1158,6 +1261,7 @@ async def _pump_server_log(project_id: str, proc):
             log.append(
                 line.decode("utf-8", errors="replace").rstrip("\n")
             )
+            entry["total_lines"] = entry.get("total_lines", 0) + 1
     except Exception:
         pass
 
@@ -1211,6 +1315,7 @@ async def start_project_server(
             "port": port,
             "entry_file": str(relative_entry),
             "log": deque(maxlen=400),
+            "total_lines": 0,
             "started_at": time.time(),
         }
 
@@ -1863,6 +1968,77 @@ async def api_get_project_server(project_id: str):
     return _server_status_dict(project_id)
 
 
+@app.websocket("/ws/projects/{project_id}/server-log")
+async def project_server_log_ws(websocket: WebSocket, project_id: str):
+    """
+    Live-tails a project server's output - like Render's log
+    view. One-directional (server to client only): polls the
+    in-memory log buffer every 750ms and pushes only what's new,
+    using a running total-lines counter rather than buffer
+    length so it stays correct even once the buffer's 400-line
+    cap starts dropping old lines. Survives the project server
+    being stopped and restarted without the client reconnecting -
+    it just reports the status change and starts counting fresh.
+    """
+
+    await websocket.accept()
+
+    last_process = None
+    last_sent_total = 0
+    last_reported_status = None
+
+    try:
+        while True:
+
+            entry = _running_servers.get(project_id)
+
+            if entry is None or entry["process"].returncode is not None:
+
+                if last_reported_status != "stopped":
+                    await websocket.send_text(json.dumps({
+                        "type": "status", "status": "stopped"
+                    }))
+                    last_reported_status = "stopped"
+                    last_process = None
+                    last_sent_total = 0
+
+            else:
+
+                if entry["process"] is not last_process:
+                    # A (re)start since we last looked - fresh
+                    # log buffer, so count from zero.
+                    last_process = entry["process"]
+                    last_sent_total = 0
+                    await websocket.send_text(json.dumps({
+                        "type": "status", "status": "running"
+                    }))
+                    last_reported_status = "running"
+
+                new_count = entry.get("total_lines", 0) - last_sent_total
+
+                if new_count > 0:
+                    current = list(entry["log"])
+                    to_send = (
+                        current[-new_count:]
+                        if new_count <= len(current)
+                        else current
+                    )
+                    for line in to_send:
+                        await websocket.send_text(json.dumps({
+                            "type": "log", "line": line
+                        }))
+                    last_sent_total = entry.get("total_lines", 0)
+
+            await asyncio.sleep(0.75)
+
+    except Exception:
+        # Covers a normal client-initiated disconnect as well as
+        # any transient send error - either way there's nothing
+        # to clean up, this handler owns no resources beyond the
+        # socket itself.
+        pass
+
+
 # =========================================================
 # FILE LIST
 # =========================================================
@@ -2097,6 +2273,116 @@ async def write_file(
     return {
         "ok": True,
         "path": path
+    }
+
+
+# =========================================================
+# FILE HISTORY (list / restore earlier saved versions)
+# =========================================================
+
+@app.get("/api/projects/{project_id}/files/versions")
+async def list_file_versions(project_id: str, path: str):
+
+    if db_pool is None:
+        return {"versions": []}
+
+    try:
+        relative = safe_relative_path(path)
+    except ValueError:
+        return JSONResponse({"error": "Invalid path"}, status_code=400)
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, content, is_binary, created_at "
+            "FROM file_versions "
+            "WHERE project_id = $1 AND path = $2 "
+            "ORDER BY created_at DESC",
+            project_id, relative.as_posix()
+        )
+
+    versions = []
+    for row in rows:
+        content = row["content"] or ""
+        if row["is_binary"]:
+            preview = "(binary file)"
+        else:
+            preview = content[:120].replace("\n", " ")
+        versions.append({
+            "id": row["id"],
+            "created_at": row["created_at"].isoformat(),
+            "preview": preview,
+            "size": len(content)
+        })
+
+    return {"versions": versions}
+
+
+@app.post("/api/projects/{project_id}/files/restore")
+async def restore_file_version(project_id: str, request: Request):
+
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Invalid request body"}, status_code=400
+        )
+
+    path = str(data.get("path", "")).strip()
+    version_id = data.get("version_id")
+
+    if not path or version_id is None:
+        return JSONResponse(
+            {"error": "path and version_id are required"},
+            status_code=400
+        )
+
+    try:
+        folder = project_path(project_id)
+        relative = safe_relative_path(path)
+    except ValueError:
+        return JSONResponse({"error": "Invalid path"}, status_code=400)
+
+    if db_pool is None:
+        return JSONResponse(
+            {"error": "Database not available"}, status_code=500
+        )
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT content, is_binary FROM file_versions "
+            "WHERE id = $1 AND project_id = $2 AND path = $3",
+            version_id, project_id, relative.as_posix()
+        )
+
+    if row is None:
+        return JSONResponse(
+            {"error": "That version no longer exists"},
+            status_code=404
+        )
+
+    content = row["content"] or ""
+    is_binary = row["is_binary"]
+
+    target = folder / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if is_binary:
+        target.write_bytes(base64.b64decode(content))
+    else:
+        target.write_text(content, encoding="utf-8")
+
+    # db_save_file() snapshots whatever's about to be overwritten
+    # (i.e. the file's current content) before writing the
+    # restored content - so restoring is itself undoable through
+    # the same History list, never a one-way trip.
+    await db_save_file(
+        project_id, relative.as_posix(), content, is_binary
+    )
+
+    return {
+        "path": relative.as_posix(),
+        "content": content,
+        "is_binary": is_binary
     }
 
 
