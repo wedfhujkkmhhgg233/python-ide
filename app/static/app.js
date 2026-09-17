@@ -901,6 +901,10 @@ const serverEntryFileInput = document.getElementById(
 const serverStartBtn = document.getElementById("serverStartBtn");
 const serverOpenLink = document.getElementById("serverOpenLink");
 const serverLog = document.getElementById("serverLog");
+const fileHistoryModal = document.getElementById("fileHistoryModal");
+const fileHistoryTitle = document.getElementById("fileHistoryTitle");
+const fileHistoryList = document.getElementById("fileHistoryList");
+const fileHistoryEmpty = document.getElementById("fileHistoryEmpty");
 let bottomTab = "output";
 let term = null;
 let fitAddon = null;
@@ -1526,6 +1530,9 @@ function setBottomTab(tab) {
     }
     if (tab === "server") {
         refreshProjectServerStatus();
+        connectServerLogSocket();
+    } else {
+        disconnectServerLogSocket();
     }
     stopServerStatusPolling();
     if (tab === "server") {
@@ -2679,13 +2686,17 @@ function renderExplorerState(container, options) {
     container.appendChild(wrap);
 }
 /* =====================================================
-   PROJECT SERVER (start / stop / status / log)
+   PROJECT SERVER (start / stop / status / live log)
    Runs an entry file as a long-lived server, separate from
    the one-shot Run button. Persists across an app restart
-   and gets a dedicated link at /run/{project_id}/.
+   and gets a dedicated link at /run/{project_id}/. Status/
+   buttons are kept fresh by REST polling; the log itself is
+   streamed live over a WebSocket, Render-style.
 ===================================================== */
 let serverStatusPollTimer = null;
 let serverActionInFlight = false;
+let serverLogSocket = null;
+let serverLogHasContent = false;
 function setServerStatus(status, title) {
     serverStatusDot.className =
         "term-status-dot" +
@@ -2707,6 +2718,77 @@ function stopServerStatusPolling() {
         serverStatusPollTimer = null;
     }
 }
+function wsOrigin() {
+    return (
+        (location.protocol === "https:" ? "wss:" : "ws:") +
+        "//" + location.host
+    );
+}
+function connectServerLogSocket() {
+    disconnectServerLogSocket();
+    if (!currentProject) {
+        return;
+    }
+    serverLog.textContent = "Connecting...";
+    serverLogHasContent = false;
+    let socket;
+    try {
+        socket = new WebSocket(
+            wsOrigin() +
+            "/ws/projects/" +
+            encodeURIComponent(currentProject) +
+            "/server-log"
+        );
+    } catch (error) {
+        serverLog.textContent =
+            "Couldn't connect to the live log.";
+        return;
+    }
+    serverLogSocket = socket;
+    socket.onmessage = (event) => {
+        let data;
+        try {
+            data = JSON.parse(event.data);
+        } catch {
+            return;
+        }
+        if (data.type === "log") {
+            if (!serverLogHasContent) {
+                serverLog.textContent = "";
+                serverLogHasContent = true;
+            }
+            serverLog.textContent += data.line + "\n";
+            serverLog.scrollTop = serverLog.scrollHeight;
+        } else if (data.type === "status") {
+            if (data.status === "running") {
+                serverLog.textContent = "";
+                serverLogHasContent = false;
+            } else if (!serverLogHasContent) {
+                serverLog.textContent = "Not running.";
+            }
+        }
+    };
+    socket.onerror = () => {
+        if (!serverLogHasContent) {
+            serverLog.textContent =
+                "Couldn't connect to the live log.";
+        }
+    };
+    socket.onclose = () => {
+        if (serverLogSocket === socket) {
+            serverLogSocket = null;
+        }
+    };
+}
+function disconnectServerLogSocket() {
+    if (serverLogSocket) {
+        try {
+            serverLogSocket.close();
+        } catch {}
+        serverLogSocket = null;
+    }
+    serverLogHasContent = false;
+}
 function renderServerStatus(data) {
     if (data.status === "running") {
         setServerStatus("connected", "Running");
@@ -2726,12 +2808,6 @@ function renderServerStatus(data) {
             '<use href="#i-play"></use></svg></span>' +
             '<span class="btn-label">Start</span>';
         serverOpenLink.style.display = "none";
-    }
-    if (data.log && data.log.length > 0) {
-        serverLog.textContent = data.log.join("\n");
-        serverLog.scrollTop = serverLog.scrollHeight;
-    } else if (data.status !== "running") {
-        serverLog.textContent = "Not running.";
     }
 }
 async function refreshProjectServerStatus() {
@@ -2834,6 +2910,177 @@ async function deleteCurrentProject() {
     clearEditorForNoFile();
     renderTabs();
     await loadProjects();
+}
+/* =====================================================
+   COPY CODE
+===================================================== */
+async function copyCurrentFileCode() {
+    if (!currentFile) {
+        alert("Open a file first.");
+        return;
+    }
+    const content = cm.getValue();
+    try {
+        await navigator.clipboard.writeText(content);
+        output.textContent = "Copied:\n" + currentFile;
+        return;
+    } catch (error) {
+        /*
+         * navigator.clipboard can fail without a secure
+         * context or a direct user gesture on some mobile
+         * browsers - fall back to a manual select+execCommand
+         * so Copy still works there.
+         */
+    }
+    const ta = document.createElement("textarea");
+    ta.value = content;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+        document.execCommand("copy");
+        output.textContent = "Copied:\n" + currentFile;
+    } catch (error) {
+        alert("Couldn't copy - select the code manually.");
+    }
+    document.body.removeChild(ta);
+}
+/* =====================================================
+   CLEAR FILE CONTENT
+   Empties the current file - doesn't delete it. The
+   previous contents get saved to File History first (via
+   the normal save path), so it's recoverable.
+===================================================== */
+async function clearCurrentFileContent() {
+    if (!currentProject || !currentFile) {
+        alert("Open a file first.");
+        return;
+    }
+    if (cm.getValue().length === 0) {
+        return;
+    }
+    const confirmed = confirm(
+        'Clear all contents of "' + currentFile + '"?\n\n' +
+        "This empties the file - it doesn't delete it. " +
+        "The current contents are saved to File History " +
+        "first, so you can restore them from there if " +
+        "needed."
+    );
+    if (!confirmed) {
+        return;
+    }
+    cm.setValue("");
+    await saveFile();
+}
+/* =====================================================
+   FILE HISTORY (view / restore earlier saved versions)
+===================================================== */
+let fileHistoryPath = null;
+function openFileHistory() {
+    if (!currentProject || !currentFile) {
+        alert("Open a file first.");
+        return;
+    }
+    fileHistoryPath = currentFile;
+    fileHistoryTitle.textContent = currentFile;
+    fileHistoryModal.classList.add("show");
+    loadFileHistory();
+}
+function closeFileHistory() {
+    fileHistoryModal.classList.remove("show");
+}
+async function loadFileHistory() {
+    fileHistoryList.innerHTML = "";
+    fileHistoryEmpty.hidden = true;
+    fileHistoryEmpty.textContent = "No earlier versions saved yet.";
+    try {
+        const data = await api(
+            "/api/projects/" +
+            encodeURIComponent(currentProject) +
+            "/files/versions?path=" +
+            encodeURIComponent(fileHistoryPath)
+        );
+        if (!data.versions || data.versions.length === 0) {
+            fileHistoryEmpty.hidden = false;
+            return;
+        }
+        for (const version of data.versions) {
+            const row = document.createElement("div");
+            row.className = "file-history-item";
+            const meta = document.createElement("div");
+            meta.className = "file-history-meta";
+            const time = document.createElement("div");
+            time.className = "file-history-time";
+            time.textContent =
+                new Date(version.created_at).toLocaleString();
+            const preview = document.createElement("div");
+            preview.className = "file-history-preview";
+            preview.textContent = version.preview || "(empty)";
+            meta.appendChild(time);
+            meta.appendChild(preview);
+            const restoreBtn = document.createElement("button");
+            restoreBtn.className =
+                "term-tool-btn file-history-restore-btn";
+            restoreBtn.textContent = "Restore";
+            restoreBtn.onclick = () =>
+                restoreFileVersion(version.id);
+            row.appendChild(meta);
+            row.appendChild(restoreBtn);
+            fileHistoryList.appendChild(row);
+        }
+    } catch (error) {
+        fileHistoryEmpty.hidden = false;
+        fileHistoryEmpty.textContent =
+            "Couldn't load history: " + error.message;
+    }
+}
+async function restoreFileVersion(versionId) {
+    const confirmed = confirm(
+        'Restore this version of "' + fileHistoryPath + '"?\n\n' +
+        "Whatever's there now gets saved to history first, " +
+        "so this itself can be undone."
+    );
+    if (!confirmed) {
+        return;
+    }
+    let data;
+    try {
+        data = await api(
+            "/api/projects/" +
+            encodeURIComponent(currentProject) +
+            "/files/restore",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    path: fileHistoryPath,
+                    version_id: versionId
+                })
+            }
+        );
+    } catch (error) {
+        alert("Restore failed:\n" + error.message);
+        return;
+    }
+    if (currentFile === fileHistoryPath && !data.is_binary) {
+        const content = data.content || "";
+        cm.setValue(content);
+        editor.dataset.saved = content;
+        const entry = findOpenFile(currentFile);
+        if (entry) {
+            entry.content = content;
+            entry.savedContent = content;
+        }
+        dirtyIndicator.style.display = "none";
+        updateActiveTabDirtyClass();
+    }
+    await loadFiles();
+    closeFileHistory();
+    output.textContent = "Restored:\n" + fileHistoryPath;
 }
 /* =====================================================
    LOAD PROJECTS
@@ -3042,6 +3289,7 @@ async function switchProject() {
     }
     if (bottomTab === "server") {
         refreshProjectServerStatus();
+        connectServerLogSocket();
     }
 }
 /* =====================================================
