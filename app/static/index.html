@@ -213,6 +213,24 @@
             >
                 <svg class="icon"><use href="#i-package"></use></svg> Install
             </button>
+            <button
+                onclick="hideMoreToolbarMenu(); copyCurrentFileCode()"
+                title="Copy the current file's code to the clipboard"
+            >
+                <svg class="icon"><use href="#i-copy"></use></svg> Copy Code
+            </button>
+            <button
+                onclick="hideMoreToolbarMenu(); clearCurrentFileContent()"
+                title="Empty the current file (keeps the file itself)"
+            >
+                <svg class="icon"><use href="#i-clear"></use></svg> Clear File
+            </button>
+            <button
+                onclick="hideMoreToolbarMenu(); openFileHistory()"
+                title="View and restore earlier saved versions of this file"
+            >
+                <svg class="icon"><use href="#i-git-commit"></use></svg> File History
+            </button>
         </div>
     </div>
     <input
@@ -832,6 +850,31 @@ Your script must read the PORT env var and bind to it, e.g.:
         ></div>
         <div id="quickPickerEmpty" class="quick-picker-empty" hidden>
             No matches
+        </div>
+    </div>
+</div>
+<!-- =========================
+     FILE HISTORY
+     Lists earlier saved
+     versions of the current
+     file, with a Restore
+     button per version.
+========================= -->
+<div id="fileHistoryModal" role="dialog" aria-modal="true" aria-label="File history">
+    <div class="file-history-panel">
+        <div class="file-history-header">
+            <span id="fileHistoryTitle">File history</span>
+            <button
+                class="small-button"
+                onclick="closeFileHistory()"
+                aria-label="Close"
+            >
+                <svg class="icon"><use href="#i-x"></use></svg>
+            </button>
+        </div>
+        <div id="fileHistoryList"></div>
+        <div id="fileHistoryEmpty" class="quick-picker-empty" hidden>
+            No earlier versions saved yet.
         </div>
     </div>
 </div>
